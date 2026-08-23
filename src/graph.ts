@@ -36,6 +36,8 @@ export interface Edge {
   carFree: boolean;
   /** Named scenic features that earned this edge its score. */
   credits: ScenicFeature[];
+  /** Treads on this edge, where OSM records them. Only set for stairways. */
+  stepCount?: number;
 }
 
 export interface WalkGraph {
@@ -148,6 +150,23 @@ export async function buildGraph(centre: LatLon, radiusM: number): Promise<WalkG
     const isSteps = highway === "steps";
     const carFree = isCarFree(highway, tags);
 
+    // About a third of San Francisco's stairways record their tread count.
+    // It is a property of the whole way, so convert it to a density now —
+    // splitting at junctions would otherwise count it once per resulting edge.
+    let stepsPerMetre: number | undefined;
+    if (isSteps) {
+      const declared = Number.parseInt(tags.step_count ?? "", 10);
+      if (Number.isFinite(declared) && declared > 0 && declared < 2000) {
+        let wayLength = 0;
+        for (let i = 1; i < way.nodes.length; i++) {
+          const a = coords.get(way.nodes[i - 1]!);
+          const b = coords.get(way.nodes[i]!);
+          if (a && b) wayLength += haversine(a, b);
+        }
+        if (wayLength > 0) stepsPerMetre = declared / wayLength;
+      }
+    }
+
     // Walk the way, cutting a new edge each time we reach a junction.
     let runStart: number | null = null;
     let runPts: LatLon[] = [];
@@ -181,6 +200,7 @@ export async function buildGraph(centre: LatLon, radiusM: number): Promise<WalkG
           carFree,
           featureGrid,
           hin,
+          stepsPerMetre,
         );
         if (edge.length > 0) {
           edges.push(edge);
@@ -208,6 +228,7 @@ function makeEdge(
   carFree: boolean,
   featureGrid: SpatialGrid<ScenicFeature>,
   hin: HinIndex,
+  stepsPerMetre?: number,
 ): Edge {
   let length = 0;
   for (let i = 1; i < pts.length; i++) length += haversine(pts[i - 1]!, pts[i]!);
@@ -242,6 +263,7 @@ function makeEdge(
     isSteps,
     carFree,
     credits,
+    stepCount: stepsPerMetre !== undefined ? stepsPerMetre * length : undefined,
   };
 }
 

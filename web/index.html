@@ -73,11 +73,36 @@
       </div>
 
       <div class="field">
+        <label class="field__label" for="trip">Trip</label>
+        <div class="toggle" id="trip">
+          <button type="button" data-trip="loop" class="is-active">Round trip</button>
+          <button type="button" data-trip="oneway">One way</button>
+        </div>
+      </div>
+
+      <div class="field">
         <label class="field__label" for="hills">Hills</label>
         <div class="toggle" id="hills">
           <button type="button" data-hills="avoid" class="is-active">Spare my legs</button>
           <button type="button" data-hills="seek">Take me up</button>
         </div>
+      </div>
+
+      <div class="field">
+        <div class="field__row">
+          <label class="field__label" for="height">Your height</label>
+          <span class="field__value" id="height-value">173 cm</span>
+        </div>
+        <input
+          id="height"
+          class="slider slider--plain"
+          type="range"
+          min="140"
+          max="210"
+          step="1"
+          value="173"
+        />
+        <div class="slider__ends"><span>for the step estimate</span><span id="height-alt"></span></div>
       </div>
 
       <button class="go" id="go" type="button">
@@ -91,6 +116,7 @@
 
     <!-- Results -->
     <section class="results" id="results" hidden aria-live="polite">
+      <div class="routes" id="routes" role="tablist" aria-label="Route options"></div>
       <div class="results__stats" id="stats"></div>
       <div class="results__profile">
         <svg id="profile" viewBox="0 0 600 60" preserveAspectRatio="none" role="img">

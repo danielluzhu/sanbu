@@ -276,6 +276,11 @@ body {
   border-radius: 50%;
   background: #fff;
 }
+/* The priority slider's gradient carries meaning; a plain one must not. */
+.slider--plain {
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.3));
+}
+
 .slider__ends {
   display: flex;
   justify-content: space-between;
@@ -337,6 +342,61 @@ body {
     opacity: 0;
     transform: translateY(16px);
   }
+}
+
+/* ---------- Route picker ---------- */
+
+.routes {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding-bottom: 2px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.routes:empty {
+  display: none;
+}
+
+.route {
+  flex: none;
+  scroll-snap-align: start;
+  min-width: 132px;
+  padding: 9px 13px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.18s, border-color 0.18s, color 0.18s;
+}
+.route:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+}
+.route.is-active {
+  background: linear-gradient(140deg, rgba(255, 196, 107, 0.18), rgba(255, 125, 92, 0.12));
+  border-color: rgba(255, 196, 107, 0.42);
+  color: var(--text);
+}
+.route__name {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+.route.is-active .route__name {
+  color: var(--amber);
+}
+.route__meta {
+  margin-top: 3px;
+  font-size: 10.5px;
+  color: var(--faint);
+  white-space: nowrap;
 }
 
 .results__stats {
@@ -450,6 +510,18 @@ body {
 }
 
 /* ---------- Map overlays ---------- */
+
+/* Where a one-way walk finishes. */
+.end-marker {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 3px solid var(--ink);
+  border-radius: 50%;
+  background: var(--rose);
+  box-shadow: 0 0 0 3px rgba(242, 97, 139, 0.32), 0 2px 10px rgba(0, 0, 0, 0.6);
+}
 
 .start-marker {
   width: 16px;
@@ -654,7 +726,62 @@ body {
     top: 12px;
     padding: 13px 14px;
   }
-  .results__stats {
+  /* ---------- Route picker ---------- */
+
+.routes {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding-bottom: 2px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.routes:empty {
+  display: none;
+}
+
+.route {
+  flex: none;
+  scroll-snap-align: start;
+  min-width: 132px;
+  padding: 9px 13px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.18s, border-color 0.18s, color 0.18s;
+}
+.route:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+}
+.route.is-active {
+  background: linear-gradient(140deg, rgba(255, 196, 107, 0.18), rgba(255, 125, 92, 0.12));
+  border-color: rgba(255, 196, 107, 0.42);
+  color: var(--text);
+}
+.route__name {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+.route.is-active .route__name {
+  color: var(--amber);
+}
+.route__meta {
+  margin-top: 3px;
+  font-size: 10.5px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.results__stats {
     gap: 18px;
     margin-bottom: 10px;
   }

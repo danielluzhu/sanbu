@@ -76,19 +76,54 @@ Diagrams, maps and plaques are filtered out by title and file type. Photos load 
 is already drawn, so they never hold up a walk, and author and licence are shown because most
 Commons licences require attribution.
 
-## How a loop gets built
+### Steps
 
-A round trip is two legs:
+The step estimate is not distance divided by a constant, because this app knows two things that
+break that: stairways and gradient.
+
+- **Stairways** get one footfall per tread. About 30% of San Francisco's stairways record a
+  `step_count` in OpenStreetMap (the Vulcan Stairway declares 219), and those are used directly;
+  the rest are estimated from their horizontal run at ~29cm per tread. Because a way gets split
+  at junctions, the tag is converted to a per-metre density first — otherwise a stairway
+  crossing three junctions would count its steps three times.
+- **Slopes** shorten your stride, so the same distance costs more paces.
+- **Height** sets the flat step length, at the usual 0.415 x height.
+
+Steps come out as `stairSteps + strideDistance / stepLength`, where `strideDistance` is a
+grade-adjusted distance computed once per walk. Keeping the two apart means moving the height
+slider updates the estimate instantly, with no replanning. At 3.0km that spans 5,027 steps for
+someone 155cm to 4,014 for someone 195cm.
+
+## How a walk gets built
+
+**Round trip** is two legs:
 
 1. **Outbound** — Dijkstra over the weighted graph to find every node reachable in ~44% of the
    time budget. Turnaround anchors are picked from that band, bucketed into 8 compass sectors
-   so candidate loops explore genuinely different directions, and ranked by how cheaply they
-   were reached (plus elevation, if you asked for hills).
+   so candidates explore genuinely different directions, and ranked by how cheaply they were
+   reached (plus elevation, if you asked for hills).
 2. **Return** — Dijkstra back from the anchor with every outbound edge charged a **6x retrace
    premium**. Without it, every "loop" collapses into an out-and-back down the same street.
 
-Each candidate is then judged on scenery, hazard, self-overlap and how close it lands to the
-time you asked for, with running over budget penalised harder than coming in under.
+**One way** spends the whole budget going outward and stops there. The anchor is no longer a
+turnaround but a destination, so arriving somewhere worth arriving at is weighted heavily:
+endpoints with no viewpoint, park or beach within 160m are penalised hard, because finishing a
+40-minute walk in the middle of an ordinary street is a poor reward.
+
+Each candidate is judged on scenery, hazard, self-overlap and how close it lands to the time you
+asked for, with running over budget penalised harder than coming in under.
+
+### Choosing between routes
+
+The route matters as much as the destination, so the planner returns up to **five** options
+rather than one. They are kept genuinely distinct: at most one per compass sector until every
+sector has had a turn, and any candidate sharing more than 55% of its length with an
+already-chosen route is dropped — five variations on the same street is not a choice.
+
+Each is then named for whatever it is best at within the offered set — *Most scenic*, *Safest*,
+*Most stairways*, *Most car-free*, *Flattest*, *Shortest* — one label each, strongest claim
+first. The alternatives are drawn on the map as faint dashed lines so the choice is visible,
+and you can swipe the cards, click them, or use the arrow keys.
 
 ## Running it
 
@@ -165,3 +200,5 @@ no server to keep running, and it costs nothing.
 - Scenic scores come from OSM coverage. A viewpoint nobody has mapped does not exist here.
 - Photos depend on Commons coverage. Well-known places have them; a quiet mini park may not.
 - Terrain on a 90m lattice smooths the sharpest pitches; gradients are capped at 45%.
+- Step counts are an estimate. Stride varies with pace, load and fatigue in ways height alone
+  does not capture, so treat the number as a good guess rather than a pedometer reading.

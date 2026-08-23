@@ -10,7 +10,7 @@ import "leaflet/dist/leaflet.css";
 import "./style.css";
 
 import { buildGraph, type WalkGraph } from "../src/graph";
-import { planLoop, type Preferences, type RouteStop, type Walk } from "../src/route";
+import { planWalks, stepsFor, type Preferences, type RouteStop, type Walk } from "../src/route";
 import { haversine, type LatLon } from "../src/geo";
 import { IndexedDbStore, setStore } from "../src/store";
 import { findPhotos, type Photo } from "../src/photos";
@@ -20,12 +20,19 @@ setStore(new IndexedDbStore());
 const SF_DEFAULT = { lat: 37.7764, lon: -122.4346 }; // Alamo Square
 const SF_BOUNDS = { south: 37.69, west: -122.55, north: 37.84, east: -122.34 };
 
+const HEIGHT_KEY = "sanbu:height";
+
 const state = {
   origin: null as LatLon | null,
   minutes: 40,
   scenic: 0.6,
   hills: "avoid" as "avoid" | "seek",
+  trip: "loop" as "loop" | "oneway",
+  heightCm: Number(localStorage.getItem(HEIGHT_KEY)) || 173,
   busy: false,
+  /** The alternatives currently on offer, best first. */
+  routes: [] as Walk[],
+  selected: 0,
 };
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -47,6 +54,10 @@ const els = {
   loadingText: $("loading-text"),
   panel: $("panel"),
   panelToggle: $<HTMLButtonElement>("panel-toggle"),
+  routes: $("routes"),
+  height: $<HTMLInputElement>("height"),
+  heightValue: $("height-value"),
+  heightAlt: $("height-alt"),
 };
 
 /* ---------- Map ---------- */
@@ -153,8 +164,46 @@ els.scenic.addEventListener("input", () => {
             : "Views at all costs";
 });
 
+document.querySelectorAll<HTMLButtonElement>("#trip button").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#trip button").forEach((b) => b.classList.remove("is-active"));
+    btn.classList.add("is-active");
+    state.trip = btn.dataset.trip === "oneway" ? "oneway" : "loop";
+  });
+});
+
+function renderHeight(): void {
+  const cm = state.heightCm;
+  const inches = Math.round(cm / 2.54);
+  els.heightValue.textContent = `${cm} cm`;
+  els.heightAlt.textContent = `${Math.floor(inches / 12)}′${inches % 12}″`;
+}
+
+els.height.value = String(state.heightCm);
+renderHeight();
+
+els.height.addEventListener("input", () => {
+  state.heightCm = Number(els.height.value);
+  localStorage.setItem(HEIGHT_KEY, String(state.heightCm));
+  renderHeight();
+  // Steps are derived from the walk, not baked into it, so the estimate can
+  // follow the slider without replanning.
+  const walk = state.routes[state.selected];
+  if (walk) {
+    renderStats(walk);
+    renderRoutePicker();
+  }
+});
+
 els.panelToggle.addEventListener("click", () => els.panel.classList.toggle("is-hidden"));
 els.go.addEventListener("click", plan);
+
+// Left and right step through the alternatives once a walk is on screen.
+document.addEventListener("keydown", (e) => {
+  if (state.routes.length < 2) return;
+  if (e.key === "ArrowLeft") selectRoute(state.selected - 1);
+  else if (e.key === "ArrowRight") selectRoute(state.selected + 1);
+});
 
 /* ---------- Planning ---------- */
 
@@ -207,6 +256,7 @@ async function plan(): Promise<void> {
     minutes: state.minutes,
     scenic: state.scenic,
     hills: state.hills,
+    trip: state.trip,
   };
   // Enough room for the loop to breathe without pulling half the city.
   const radiusM = Math.min(2600, Math.max(900, prefs.minutes * 1.33 * 60 * 0.42));
@@ -224,12 +274,17 @@ async function plan(): Promise<void> {
     // Yield once so the spinner paints before the search occupies the thread.
     await new Promise((r) => setTimeout(r, 0));
 
-    const walk = planLoop(graph, state.origin, prefs);
-    if (!walk) {
-      showToast("Could not find a loop from there. Try a longer walk or a nearby street.");
+    const walks = planWalks(graph, state.origin, prefs, 5);
+    if (walks.length === 0) {
+      showToast(
+        state.trip === "loop"
+          ? "Could not find a loop from there. Try a longer walk or a nearby street."
+          : "Could not find anywhere good to walk to in that time. Try a longer walk.",
+      );
       return;
     }
-    renderWalk(walk);
+    state.routes = walks;
+    selectRoute(0);
   } catch (err) {
     showToast(`Map data is unavailable right now. ${(err as Error).message}`);
   } finally {
@@ -276,16 +331,71 @@ const STOP_ICONS: Record<string, string> = {
   tree: "↟",
 };
 
+/** Switches to one of the offered routes, wrapping at both ends. */
+function selectRoute(index: number): void {
+  if (state.routes.length === 0) return;
+  const n = state.routes.length;
+  state.selected = ((index % n) + n) % n;
+  renderWalk(state.routes[state.selected]!);
+  els.routes
+    .querySelector(`.route[data-i="${state.selected}"]`)
+    ?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+}
+
+function renderRoutePicker(): void {
+  if (state.routes.length < 2) {
+    els.routes.innerHTML = "";
+    return;
+  }
+  els.routes.innerHTML = state.routes
+    .map((w, i) => {
+      const km = w.distance < 950 ? `${Math.round(w.distance)} m` : `${(w.distance / 1000).toFixed(1)} km`;
+      return `<button class="route${i === state.selected ? " is-active" : ""}"
+          data-i="${i}" role="tab" aria-selected="${i === state.selected}">
+        <div class="route__name">${escapeHtml(w.character ?? "Alternative")}</div>
+        <div class="route__meta">${km} · ${Math.round(w.duration / 60)} min · ${Math.round(w.ascent)} m ↑</div>
+      </button>`;
+    })
+    .join("");
+
+  els.routes.querySelectorAll<HTMLButtonElement>(".route").forEach((btn) => {
+    btn.addEventListener("click", () => selectRoute(Number(btn.dataset.i)));
+  });
+}
+
 function renderWalk(walk: Walk): void {
   routeLayer.clearLayers();
   markerLayer.clearLayers();
   if (startMarker) startMarker.addTo(markerLayer);
 
+  // The routes not taken, so the choice is visible on the map itself.
+  state.routes.forEach((other, i) => {
+    if (i === state.selected) return;
+    L.polyline(other.coordinates, {
+      color: "#8d95a5",
+      weight: 2,
+      opacity: 0.3,
+      dashArray: "3 6",
+      interactive: false,
+    }).addTo(routeLayer);
+  });
+
   drawRoute(walk.coordinates);
+
+  // A one-way walk ends somewhere else, and that needs saying on the map.
+  if (!walk.isLoop) {
+    L.marker([walk.end.lat, walk.end.lon], {
+      icon: L.divIcon({ className: "", html: '<div class="end-marker"></div>', iconSize: [22, 22], iconAnchor: [11, 11] }),
+      zIndexOffset: 900,
+    })
+      .bindPopup("<b>Journey's end</b><em>One-way walk finishes here</em>")
+      .addTo(markerLayer);
+  }
   drawStops(walk.stops);
   renderStats(walk);
   renderProfile(walk);
   renderStops(walk.stops);
+  renderRoutePicker();
   loadPhotos(walk.stops);
 
   els.results.hidden = false;
@@ -294,7 +404,8 @@ function renderWalk(walk: Walk): void {
   // of stat tiles, and an unpadded fit tucks the route underneath it.
   const narrow = window.innerWidth <= 860;
   const tray = els.results.offsetHeight + 28;
-  map.fitBounds(L.latLngBounds(walk.coordinates as L.LatLngTuple[]), {
+  const allPoints = state.routes.flatMap((w) => w.coordinates) as L.LatLngTuple[];
+  map.fitBounds(L.latLngBounds(allPoints.length ? allPoints : (walk.coordinates as L.LatLngTuple[])), {
     paddingTopLeft: narrow ? [24, tray] : [364, 30],
     paddingBottomRight: narrow ? [24, 96] : [30, tray],
   });
@@ -438,6 +549,12 @@ function renderStats(walk: Walk): void {
       tone: hinPct < 5 ? "good" : hinPct < 20 ? "warn" : "bad",
     },
   ];
+
+  const steps = stepsFor(walk, state.heightCm);
+  stats.splice(3, 0, {
+    value: steps >= 10000 ? `${(steps / 1000).toFixed(1)}k` : String(steps),
+    label: "Steps",
+  });
 
   if (walk.stepsMetres > 20) {
     stats.push({ value: `${Math.round(walk.stepsMetres)} m`, label: "Stairways" });
