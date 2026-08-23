@@ -4,7 +4,8 @@
 returns a loop walk back to where you started — routed toward viewpoints, parks, tree cover
 and public stairways, and away from the streets that hurt pedestrians.
 
-Built with Bun, SQLite and Leaflet. No API keys.
+**Live at [danielluzhu.github.io/sanbu](https://danielluzhu.github.io/sanbu)** — a static site with
+no backend. The entire routing engine runs in your browser.
 
 ---
 
@@ -37,7 +38,8 @@ top.
 
 The base signal is San Francisco's **Vision Zero High Injury Network** — the ~12% of streets
 that account for the large majority of severe and fatal traffic injuries
-([DataSF `enwt-3u8m`](https://data.sfgov.org/resource/enwt-3u8m.json), 5,917 segments).
+([DataSF `enwt-3u8m`](https://data.sfgov.org/resource/enwt-3u8m.json)). The geometry is baked
+into a static asset at build time rather than fetched per visit.
 
 Crime data was deliberately left out. At single-block granularity it mostly reflects
 reporting patterns and foot traffic rather than risk, and crime-weighted routing tends to
@@ -55,8 +57,10 @@ very different things:
 
 ### Hills
 
-Elevation comes from [Open-Meteo](https://open-meteo.com/)'s free terrain API, sampled on a
-fixed ~90m lattice, cached permanently in SQLite and bilinearly interpolated per node.
+Elevation comes from a ~90m terrain lattice covering the whole city, baked at build time and
+bilinearly interpolated per node. Sampling it live was the original design and it was wrong:
+every first-time visitor fired a burst of requests at the elevation API, got rate limited, and
+silently received flat terrain — which quietly disabled the hills preference entirely.
 
 Hills are both the cost and the payoff — the views are at the top. **Spare my legs** penalises
 gradient; **Take me up** discounts climbing *and* biases the turnaround anchor toward high
@@ -81,41 +85,72 @@ time you asked for, with running over budget penalised harder than coming in und
 
 ```bash
 bun install
-bun run dev          # http://localhost:4321
+bun run dev          # builds, then serves dist/ on http://localhost:4321
 ```
 
-`bun start` for production, `bun run typecheck` for types. `PORT` overrides the port.
+`bun run build` produces the static site in `dist/`. `bun run typecheck` checks types. The dev
+server only serves `dist/`, so what you test locally is byte for byte what Pages will serve.
 
-The first request in a new area takes 10–20 seconds while it fetches the street network,
-scenic features and terrain. After that SQLite serves it and replanning is ~1 second.
+The first walk in a new area takes 10–20 seconds while it fetches the street network and scenic
+features from Overpass. After that IndexedDB serves them and replanning is under a second.
+
+### Regenerating the baked data
+
+Neither is needed for a normal build — both are committed.
+
+```bash
+bun run build:hin          # DataSF High Injury Network -> web/data/hin.json
+bun run scripts/build-elevation.ts   # terrain lattice -> web/data/elevation.json
+```
+
+The elevation bake takes a while and both providers throttle bursts, so it is paced, fails over
+between Open-Meteo and OpenTopoData, and checkpoints as it goes — rerun it to resume.
 
 ## Layout
 
 ```
-src/
-  server.ts     HTTP + in-memory graph cache (reused within 400m)
-  graph.ts      OSM ways -> routable graph, split at junctions, scored
-  route.ts      Loop generation, cost model, Dijkstra, candidate judging
-  hin.ts        Vision Zero High Injury Network + spatial index
-  elevation.ts  Terrain lattice, cached forever
-  overpass.ts   Overpass access — serialised queue, mirror failover, retries
-  geo.ts        Haversine, local planar projection, spatial grid
-  db.ts         SQLite cache
-public/         Single-page front end (Leaflet, no framework)
+src/                Routing engine — no platform assumptions
+  graph.ts          OSM ways -> routable graph, split at junctions, scored
+  route.ts          Loop generation, cost model, Dijkstra, candidate judging
+  hin.ts            Vision Zero High Injury Network + spatial index
+  elevation.ts      Terrain lattice loading and interpolation
+  overpass.ts       Overpass access — serialised queue, mirror failover, retries
+  geo.ts            Haversine, local planar projection, spatial grid
+  store.ts          Cache interface; IndexedDB in the browser
+  server.ts         Local static dev server
+web/
+  main.ts           Browser entry — UI, map, and the graph cache
+  index.html
+  style.css
+  data/             Baked HIN and elevation assets
+scripts/
+  build.ts          Bundles the static site into dist/
+  build-hin.ts      Regenerates the High Injury Network asset
+  build-elevation.ts  Regenerates the terrain lattice
 ```
+
+## Why it is static
+
+Every upstream the app needs sends `Access-Control-Allow-Origin: *`, so the browser can call
+them directly. The two large, slow datasets — the High Injury Network and the terrain lattice —
+are baked at build time, which leaves Overpass as the only live dependency. That has to stay
+live: the street network is per-area and far too large to ship.
+
+The consequence is that the whole thing is a folder of files. GitHub Pages serves it, there is
+no server to keep running, and it costs nothing.
 
 ## Data sources
 
 - [OpenStreetMap](https://openstreetmap.org/copyright) via Overpass — streets and features (ODbL)
 - [DataSF](https://data.sfgov.org) — Vision Zero High Injury Network
-- [Open-Meteo](https://open-meteo.com/) — elevation
+- [Open-Meteo](https://open-meteo.com/) and [OpenTopoData](https://www.opentopodata.org/) — elevation
 - [CARTO](https://carto.com/attributions) — dark basemap tiles
 
 ## Limits
 
 - **San Francisco only.** The safety layer is SF's. Requests outside the city are rejected
   rather than silently falling back to a worse model.
-- Overpass and Open-Meteo are free public endpoints with rate limits; the cache exists to stay
-  well inside them.
+- Overpass is a free public endpoint with rate limits. Queries are serialised behind a queue and
+  cached in IndexedDB to stay well inside them.
 - Scenic scores come from OSM coverage. A viewpoint nobody has mapped does not exist here.
 - Terrain on a 90m lattice smooths the sharpest pitches; gradients are capped at 45%.

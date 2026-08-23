@@ -1,5 +1,5 @@
 /** Overpass API access: the walkable street graph and the scenic features on it. */
-import { cached } from "./db";
+import { cached } from "./store";
 import type { LatLon } from "./geo";
 
 const ENDPOINTS = [
@@ -55,10 +55,16 @@ function serialize<T>(job: () => Promise<T>): Promise<T> {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function attempt(url: string, ql: string): Promise<RawElement[]> {
+  // `user-agent` is a forbidden header name in browsers: setting it is ignored
+  // there, so it is only sent from the Bun build where Overpass etiquette asks
+  // for it. A URLSearchParams body keeps this a simple CORS request.
+  const headers: Record<string, string> =
+    typeof window === "undefined" ? { "user-agent": "sanbu (scenic walk planner)" } : {};
+
   const res = await fetch(url, {
     method: "POST",
     body: new URLSearchParams({ data: ql }),
-    headers: { "user-agent": "sanbu/0.1 (scenic walk planner)" },
+    headers,
     signal: AbortSignal.timeout(120_000),
   });
   if (!res.ok) {

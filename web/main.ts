@@ -1,23 +1,40 @@
-/* sanbu — front end. Map, controls, and rendering of a planned walk. */
+/**
+ * sanbu — browser entry point.
+ *
+ * The whole routing engine runs here. There is no backend: OpenStreetMap,
+ * Open-Meteo and DataSF all permit direct browser calls, and the High Injury
+ * Network ships as a static asset, so the app is a plain static site.
+ */
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+import "./style.css";
+
+import { buildGraph, type WalkGraph } from "../src/graph";
+import { planLoop, type Preferences, type RouteStop, type Walk } from "../src/route";
+import { haversine, type LatLon } from "../src/geo";
+import { IndexedDbStore, setStore } from "../src/store";
+
+setStore(new IndexedDbStore());
 
 const SF_DEFAULT = { lat: 37.7764, lon: -122.4346 }; // Alamo Square
+const SF_BOUNDS = { south: 37.69, west: -122.55, north: 37.84, east: -122.34 };
 
 const state = {
-  origin: null,
+  origin: null as LatLon | null,
   minutes: 40,
   scenic: 0.6,
-  hills: "avoid",
+  hills: "avoid" as "avoid" | "seek",
   busy: false,
 };
 
-const $ = (id) => document.getElementById(id);
+const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const els = {
-  locate: $("locate"),
+  locate: $<HTMLButtonElement>("locate"),
   locateLabel: $("locate-label"),
   locateSub: $("locate-sub"),
-  go: $("go"),
+  go: $<HTMLButtonElement>("go"),
   goLabel: $("go-label"),
-  scenic: $("scenic"),
+  scenic: $<HTMLInputElement>("scenic"),
   scenicValue: $("scenic-value"),
   results: $("results"),
   stats: $("stats"),
@@ -28,7 +45,7 @@ const els = {
   loading: $("loading"),
   loadingText: $("loading-text"),
   panel: $("panel"),
-  panelToggle: $("panel-toggle"),
+  panelToggle: $<HTMLButtonElement>("panel-toggle"),
 };
 
 /* ---------- Map ---------- */
@@ -54,13 +71,15 @@ L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
 
 const routeLayer = L.layerGroup().addTo(map);
 const markerLayer = L.layerGroup().addTo(map);
-let startMarker = null;
+let startMarker: L.Marker | null = null;
 
-map.on("click", (e) => setOrigin(e.latlng.lat, e.latlng.lng, "Pinned on the map"));
+map.on("click", (e: L.LeafletMouseEvent) =>
+  setOrigin(e.latlng.lat, e.latlng.lng, "Pinned on the map"),
+);
 
 /* ---------- Origin ---------- */
 
-function setOrigin(lat, lon, label) {
+function setOrigin(lat: number, lon: number, label: string): void {
   state.origin = { lat, lon };
   els.locate.classList.add("is-set");
   els.locateLabel.textContent = label;
@@ -98,7 +117,7 @@ els.locate.addEventListener("click", () => {
 
 /* ---------- Controls ---------- */
 
-document.querySelectorAll("#time-group button").forEach((btn) => {
+document.querySelectorAll<HTMLButtonElement>("#time-group button").forEach((btn) => {
   btn.addEventListener("click", () => {
     document.querySelectorAll("#time-group button").forEach((b) => {
       b.classList.remove("is-active");
@@ -110,11 +129,11 @@ document.querySelectorAll("#time-group button").forEach((btn) => {
   });
 });
 
-document.querySelectorAll("#hills button").forEach((btn) => {
+document.querySelectorAll<HTMLButtonElement>("#hills button").forEach((btn) => {
   btn.addEventListener("click", () => {
     document.querySelectorAll("#hills button").forEach((b) => b.classList.remove("is-active"));
     btn.classList.add("is-active");
-    state.hills = btn.dataset.hills;
+    state.hills = btn.dataset.hills === "seek" ? "seek" : "avoid";
   });
 });
 
@@ -122,71 +141,129 @@ els.scenic.addEventListener("input", () => {
   const v = Number(els.scenic.value);
   state.scenic = v / 100;
   els.scenicValue.textContent =
-    v < 20 ? "Safety first" : v < 45 ? "Cautious" : v < 70 ? "Balanced" : v < 90 ? "Scenic" : "Views at all costs";
+    v < 20
+      ? "Safety first"
+      : v < 45
+        ? "Cautious"
+        : v < 70
+          ? "Balanced"
+          : v < 90
+            ? "Scenic"
+            : "Views at all costs";
 });
 
 els.panelToggle.addEventListener("click", () => els.panel.classList.toggle("is-hidden"));
-
 els.go.addEventListener("click", plan);
 
 /* ---------- Planning ---------- */
 
-async function plan() {
+/**
+ * Graphs are expensive to build (Overpass plus terrain), so one is reused for
+ * anyone starting within a few hundred metres of a previous request.
+ */
+const graphCache: Array<{ graph: WalkGraph; at: number }> = [];
+const GRAPH_TTL = 30 * 60 * 1000;
+const MAX_GRAPHS = 4;
+
+async function getGraph(centre: LatLon, radiusM: number): Promise<WalkGraph> {
+  const fresh = graphCache.filter((e) => Date.now() - e.at <= GRAPH_TTL);
+  graphCache.length = 0;
+  graphCache.push(...fresh);
+
+  const hit = graphCache.find((e) => haversine(e.graph.centre, centre) < 400);
+  if (hit) return hit.graph;
+
+  const graph = await buildGraph(centre, radiusM);
+  graphCache.unshift({ graph, at: Date.now() });
+  graphCache.length = Math.min(graphCache.length, MAX_GRAPHS);
+  return graph;
+}
+
+function inServiceArea(p: LatLon): boolean {
+  return (
+    p.lat >= SF_BOUNDS.south &&
+    p.lat <= SF_BOUNDS.north &&
+    p.lon >= SF_BOUNDS.west &&
+    p.lon <= SF_BOUNDS.east
+  );
+}
+
+async function plan(): Promise<void> {
   if (state.busy) return;
   if (!state.origin) {
     showToast("Pick a starting point first — use your location or tap the map.");
     return;
   }
+  if (!inServiceArea(state.origin)) {
+    showToast(
+      "sanbu's safety data is San Francisco's Vision Zero network, so walks are " +
+        "limited to San Francisco for now.",
+    );
+    return;
+  }
+
+  const prefs: Preferences = {
+    minutes: state.minutes,
+    scenic: state.scenic,
+    hills: state.hills,
+  };
+  // Enough room for the loop to breathe without pulling half the city.
+  const radiusM = Math.min(2600, Math.max(900, prefs.minutes * 1.33 * 60 * 0.42));
 
   setBusy(true);
   hideToast();
 
   try {
-    const res = await fetch("/api/plan", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        lat: state.origin.lat,
-        lon: state.origin.lon,
-        minutes: state.minutes,
-        scenic: state.scenic,
-        hills: state.hills,
-      }),
-    });
-
-    const data = await res.json();
-    if (!res.ok) {
-      showToast(data.error || "Something went wrong planning that walk.");
+    const graph = await getGraph(state.origin, radiusM);
+    if (graph.edges.length === 0) {
+      showToast("No walkable streets found around that point.");
       return;
     }
-    renderWalk(data.walk);
+
+    // Yield once so the spinner paints before the search occupies the thread.
+    await new Promise((r) => setTimeout(r, 0));
+
+    const walk = planLoop(graph, state.origin, prefs);
+    if (!walk) {
+      showToast("Could not find a loop from there. Try a longer walk or a nearby street.");
+      return;
+    }
+    renderWalk(walk);
   } catch (err) {
-    showToast(`Could not reach the planner. ${err.message}`);
+    showToast(`Map data is unavailable right now. ${(err as Error).message}`);
   } finally {
     setBusy(false);
   }
 }
 
-function setBusy(busy) {
+let busyTimers: number[] = [];
+
+function setBusy(busy: boolean): void {
   state.busy = busy;
   els.go.disabled = busy;
   els.goLabel.textContent = busy ? "Finding your walk…" : "Walk me";
   els.loading.hidden = !busy;
-  if (busy) {
-    // The first request for an area pays for Overpass + terrain; say so.
-    els.loadingText.textContent = "Reading the streets…";
+
+  busyTimers.forEach(clearTimeout);
+  busyTimers = [];
+  if (!busy) return;
+
+  // The first walk in an area pays for Overpass and terrain; say so rather than
+  // leaving a bare spinner.
+  els.loadingText.textContent = "Reading the streets…";
+  busyTimers.push(
     setTimeout(() => {
       if (state.busy) els.loadingText.textContent = "Scoring viewpoints and slopes…";
-    }, 2600);
+    }, 2600) as unknown as number,
     setTimeout(() => {
       if (state.busy) els.loadingText.textContent = "First walk in a new area takes a moment…";
-    }, 8000);
-  }
+    }, 8000) as unknown as number,
+  );
 }
 
 /* ---------- Rendering ---------- */
 
-const STOP_ICONS = {
+const STOP_ICONS: Record<string, string> = {
   viewpoint: "◎",
   park: "❦",
   garden: "✿",
@@ -198,7 +275,7 @@ const STOP_ICONS = {
   tree: "↟",
 };
 
-function renderWalk(walk) {
+function renderWalk(walk: Walk): void {
   routeLayer.clearLayers();
   markerLayer.clearLayers();
   if (startMarker) startMarker.addTo(markerLayer);
@@ -215,7 +292,7 @@ function renderWalk(walk) {
   // of stat tiles, and an unpadded fit tucks the route underneath it.
   const narrow = window.innerWidth <= 860;
   const tray = els.results.offsetHeight + 28;
-  map.fitBounds(L.latLngBounds(walk.coordinates), {
+  map.fitBounds(L.latLngBounds(walk.coordinates as L.LatLngTuple[]), {
     paddingTopLeft: narrow ? [24, tray] : [364, 30],
     paddingBottomRight: narrow ? [24, 96] : [30, tray],
   });
@@ -228,7 +305,7 @@ function renderWalk(walk) {
  * polylines whose colour walks from amber to rose along the way — it reads as
  * direction of travel. A wide, faint copy underneath gives the glow.
  */
-function drawRoute(coords) {
+function drawRoute(coords: Array<[number, number]>): void {
   if (coords.length < 2) return;
 
   L.polyline(coords, {
@@ -240,7 +317,7 @@ function drawRoute(coords) {
     interactive: false,
   }).addTo(routeLayer);
 
-  const STOPS = [
+  const STOPS: Array<[number, number, number]> = [
     [255, 196, 107],
     [255, 125, 92],
     [242, 97, 139],
@@ -263,19 +340,19 @@ function drawRoute(coords) {
   }
 }
 
-function gradientAt(stops, t) {
+function gradientAt(stops: Array<[number, number, number]>, t: number): string {
   const scaled = t * (stops.length - 1);
   const i = Math.min(stops.length - 2, Math.floor(scaled));
   const f = scaled - i;
-  const a = stops[i];
-  const b = stops[i + 1];
-  const mix = a.map((v, k) => Math.round(v + (b[k] - v) * f));
+  const a = stops[i]!;
+  const b = stops[i + 1]!;
+  const mix = a.map((v, k) => Math.round(v + (b[k]! - v) * f));
   return `rgb(${mix[0]}, ${mix[1]}, ${mix[2]})`;
 }
 
-function drawStops(stops) {
+function drawStops(stops: RouteStop[]): void {
   stops.forEach((stop) => {
-    const icon = STOP_ICONS[stop.kind] || "✦";
+    const icon = STOP_ICONS[stop.kind] ?? "✦";
     L.marker([stop.lat, stop.lon], {
       icon: L.divIcon({
         className: "",
@@ -291,18 +368,18 @@ function drawStops(stops) {
   });
 }
 
-function renderStats(walk) {
+function renderStats(walk: Walk): void {
   const hinPct = walk.distance > 0 ? (walk.hinMetres / walk.distance) * 100 : 0;
   const carFreePct = walk.distance > 0 ? (walk.carFreeMetres / walk.distance) * 100 : 0;
 
-  const stats = [
+  const stats: Array<{ value: string; label: string; tone?: string }> = [
     { value: fmtDistance(walk.distance), label: "Distance" },
     { value: `${Math.round(walk.duration / 60)} min`, label: "On foot" },
     { value: `${Math.round(walk.ascent)} m`, label: "Climb" },
     {
       value: `${Math.round(carFreePct)}%`,
       label: "Car-free",
-      tone: carFreePct > 35 ? "good" : null,
+      tone: carFreePct > 35 ? "good" : undefined,
     },
     {
       value: hinPct < 1 ? "None" : `${Math.round(hinPct)}%`,
@@ -325,7 +402,7 @@ function renderStats(walk) {
     .join("");
 }
 
-function renderProfile(walk) {
+function renderProfile(walk: Walk): void {
   const svg = els.profile;
   const pts = walk.profile;
   svg.innerHTML = "<title>Elevation profile of the walk</title>";
@@ -337,16 +414,18 @@ function renderProfile(walk) {
   const W = 600;
   const H = 60;
   const PAD = 6;
-  const maxD = pts[pts.length - 1].d || 1;
+  const maxD = pts[pts.length - 1]!.d || 1;
   const eles = pts.map((p) => p.ele);
   const lo = Math.min(...eles);
   const hi = Math.max(...eles);
   const span = Math.max(8, hi - lo); // never exaggerate a flat walk
 
-  const x = (d) => (d / maxD) * W;
-  const y = (e) => H - PAD - ((e - lo) / span) * (H - PAD * 2);
+  const x = (d: number) => (d / maxD) * W;
+  const y = (e: number) => H - PAD - ((e - lo) / span) * (H - PAD * 2);
 
-  const line = pts.map((p, i) => `${i === 0 ? "M" : "L"}${x(p.d).toFixed(1)},${y(p.ele).toFixed(1)}`).join(" ");
+  const line = pts
+    .map((p, i) => `${i === 0 ? "M" : "L"}${x(p.d).toFixed(1)},${y(p.ele).toFixed(1)}`)
+    .join(" ");
   const area = `${line} L${W},${H} L0,${H} Z`;
 
   svg.insertAdjacentHTML(
@@ -373,7 +452,7 @@ function renderProfile(walk) {
     (grade >= 15 ? " — properly San Francisco" : "");
 }
 
-function renderStops(stops) {
+function renderStops(stops: RouteStop[]): void {
   if (stops.length === 0) {
     els.stops.innerHTML =
       '<span class="chip chip--empty">No named landmarks on this one — just good streets</span>';
@@ -382,25 +461,25 @@ function renderStops(stops) {
   els.stops.innerHTML = stops
     .map(
       (s, i) => `<button class="chip" data-i="${i}">
-        <span class="chip__icon">${STOP_ICONS[s.kind] || "✦"}</span>
+        <span class="chip__icon">${STOP_ICONS[s.kind] ?? "✦"}</span>
         <span>${escapeHtml(s.name)}</span>
         <span class="chip__at">${fmtDistance(s.at)}</span>
       </button>`,
     )
     .join("");
 
-  els.stops.querySelectorAll(".chip").forEach((chip) => {
+  els.stops.querySelectorAll<HTMLButtonElement>(".chip").forEach((chip) => {
     chip.addEventListener("click", () => {
       const stop = stops[Number(chip.dataset.i)];
-      map.flyTo([stop.lat, stop.lon], 17, { duration: 0.7 });
+      if (stop) map.flyTo([stop.lat, stop.lon], 17, { duration: 0.7 });
     });
   });
 }
 
 /* ---------- Utilities ---------- */
 
-function labelFor(kind) {
-  const labels = {
+function labelFor(kind: string): string {
+  const labels: Record<string, string> = {
     viewpoint: "Viewpoint",
     park: "Park",
     garden: "Garden",
@@ -411,28 +490,31 @@ function labelFor(kind) {
     attraction: "Attraction",
     tree: "Canopy",
   };
-  return labels[kind] || "Point of interest";
+  return labels[kind] ?? "Point of interest";
 }
 
-function fmtDistance(m) {
+function fmtDistance(m: number): string {
   return m < 950 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
 }
 
-function escapeHtml(s) {
+function escapeHtml(s: string): string {
   return String(s).replace(
     /[&<>"']/g,
-    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string,
   );
 }
 
-let toastTimer;
-function showToast(msg) {
+let toastTimer: number | undefined;
+
+function showToast(msg: string): void {
   els.toast.textContent = msg;
   els.toast.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(hideToast, 7000);
+  toastTimer = setTimeout(hideToast, 7000) as unknown as number;
 }
-function hideToast() {
+
+function hideToast(): void {
   els.toast.hidden = true;
 }
 

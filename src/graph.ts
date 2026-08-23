@@ -5,7 +5,7 @@
  * OSM ways are split at junctions so that each edge runs from one decision
  * point to the next, carrying the intermediate geometry along for drawing.
  */
-import { warmElevation, elevationAt } from "./elevation";
+import { warmElevation, elevationAt, type Lattice } from "./elevation";
 import { fetchScenicFeatures, fetchWalkNetwork, type ScenicFeature } from "./overpass";
 import { HinIndex, loadHin } from "./hin";
 import { SpatialGrid, bboxAround, haversine, type LatLon } from "./geo";

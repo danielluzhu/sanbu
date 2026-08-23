@@ -4,8 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --watch src/server.ts",
-    "start": "bun src/server.ts",
+    "build": "bun run scripts/build.ts",
+    "dev": "bun run build && bun src/server.ts",
+    "serve": "bun src/server.ts",
+    "build:hin": "bun run scripts/build-hin.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -13,6 +15,7 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "@types/leaflet": "^1.9.20",
     "typescript": "^5"
   }
 }
