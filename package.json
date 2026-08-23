@@ -8,7 +8,8 @@
     "dev": "bun run build && bun src/server.ts",
     "serve": "bun src/server.ts",
     "build:hin": "bun run scripts/build-hin.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "deploy": "bash scripts/deploy.sh"
   },
   "dependencies": {
     "leaflet": "^1.9.4"

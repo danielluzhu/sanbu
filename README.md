@@ -138,6 +138,17 @@ server only serves `dist/`, so what you test locally is byte for byte what Pages
 The first walk in a new area takes 10–20 seconds while it fetches the street network and scenic
 features from Overpass. After that IndexedDB serves them and replanning is under a second.
 
+### Publishing
+
+```bash
+bun run deploy          # typecheck, build, push main, publish dist/ to gh-pages
+```
+
+Publishing through GitHub Actions needs a token with the `workflow` scope. The workflow is
+written and sits at `.github/workflows/pages.yml`, but until
+`gh auth refresh -h github.com -s workflow` has been run it cannot be pushed, so `bun run deploy`
+does the same job from here.
+
 ### Regenerating the baked data
 
 Neither is needed for a normal build — both are committed.

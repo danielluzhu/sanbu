@@ -477,7 +477,8 @@ function popupHtml(stop: RouteStop, photo?: Photo | null): string {
     .join(" · ");
   return (
     `<a class="popup-photo" href="${escapeHtml(photo.page)}" target="_blank" rel="noopener">` +
-    `<img src="${escapeHtml(photo.url)}" alt="${escapeHtml(stop.name)}" loading="lazy" />` +
+    `<img src="${escapeHtml(photo.url)}" alt="${escapeHtml(stop.name)}" ` +
+    `onerror="this.closest('.popup-photo').remove()" />` +
     `</a>${head}` +
     (credit ? `<em class="popup-credit">${credit} · Wikimedia Commons</em>` : "")
   );
@@ -521,12 +522,25 @@ function loadPhotos(stops: RouteStop[]): void {
     stopMarkers.get(stop)?.setPopupContent(popupHtml(stop, photo));
 
     const chip = els.stops.querySelector<HTMLElement>(`.chip[data-i="${stops.indexOf(stop)}"]`);
-    const slot = chip?.querySelector(".chip__icon");
-    if (slot) {
-      slot.outerHTML =
-        `<img class="chip__thumb" src="${escapeHtml(photo.url)}" alt="" loading="lazy" />`;
-      chip?.classList.add("has-photo");
-    }
+    const slot = chip?.querySelector<HTMLElement>(".chip__icon");
+    if (!chip || !slot) return;
+
+    // Deliberately NOT lazy. The chips live in a horizontal scroller, so most
+    // of them start outside the viewport and a lazy image there simply never
+    // loads until you swipe onto it — which reads as broken. They are 96px
+    // thumbnails; loading them all eagerly is the cheaper mistake.
+    const img = new Image();
+    img.className = "chip__thumb";
+    img.alt = "";
+    img.decoding = "async";
+    img.src = photo.icon;
+    // If the image genuinely fails, put the glyph back rather than leaving a hole.
+    img.onerror = () => {
+      img.replaceWith(slot);
+      chip.classList.remove("has-photo");
+    };
+    slot.replaceWith(img);
+    chip.classList.add("has-photo");
   });
 }
 
