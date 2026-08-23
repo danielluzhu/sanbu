@@ -1,1 +1,0 @@
-this is a app that takes users location and gives them the most scenic walk, taking into account nice view points and safety of streets

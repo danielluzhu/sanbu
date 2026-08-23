@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>sanbu — the scenic way round</title>
+    <meta
+      name="description"
+      content="Loop walks in San Francisco routed for viewpoints, tree cover and street safety."
+    />
+    <link rel="stylesheet" href="/vendor/leaflet.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div id="map" aria-label="Map of your walk"></div>
+
+    <!-- Control panel -->
+    <aside class="panel" id="panel">
+      <header class="panel__head">
+        <h1 class="wordmark">sanbu<span class="wordmark__dot">.</span></h1>
+        <p class="tagline">The scenic way round — San Francisco</p>
+      </header>
+
+      <button class="locate" id="locate" type="button">
+        <span class="locate__dot" aria-hidden="true"></span>
+        <span class="locate__text">
+          <strong id="locate-label">Use my location</strong>
+          <small id="locate-sub">or tap the map to drop a pin</small>
+        </span>
+      </button>
+
+      <div class="field">
+        <label class="field__label" for="time-group">How long have you got?</label>
+        <div class="segmented" id="time-group" role="radiogroup" aria-label="Walk length">
+          <button type="button" role="radio" data-minutes="20" aria-checked="false">20m</button>
+          <button
+            type="button"
+            role="radio"
+            data-minutes="40"
+            aria-checked="true"
+            class="is-active"
+          >
+            40m
+          </button>
+          <button type="button" role="radio" data-minutes="60" aria-checked="false">60m</button>
+          <button type="button" role="radio" data-minutes="90" aria-checked="false">90m</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="field__row">
+          <label class="field__label" for="scenic">Priority</label>
+          <span class="field__value" id="scenic-value">Balanced</span>
+        </div>
+        <input
+          id="scenic"
+          class="slider"
+          type="range"
+          min="0"
+          max="100"
+          value="60"
+          aria-describedby="scenic-ends"
+        />
+        <div class="slider__ends" id="scenic-ends">
+          <span>Safest streets</span>
+          <span>Best views</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="field__label" for="hills">Hills</label>
+        <div class="toggle" id="hills">
+          <button type="button" data-hills="avoid" class="is-active">Spare my legs</button>
+          <button type="button" data-hills="seek">Take me up</button>
+        </div>
+      </div>
+
+      <button class="go" id="go" type="button">
+        <span id="go-label">Walk me</span>
+      </button>
+
+      <p class="note" id="note">
+        Routed on OpenStreetMap, weighted by SF's Vision&nbsp;Zero High Injury Network.
+      </p>
+    </aside>
+
+    <!-- Results -->
+    <section class="results" id="results" hidden aria-live="polite">
+      <div class="results__stats" id="stats"></div>
+      <div class="results__profile">
+        <svg id="profile" viewBox="0 0 600 60" preserveAspectRatio="none" role="img">
+          <title>Elevation profile of the walk</title>
+        </svg>
+        <div class="profile__caption" id="profile-caption"></div>
+      </div>
+      <div class="results__stops" id="stops"></div>
+    </section>
+
+    <div class="toast" id="toast" hidden role="status"></div>
+
+    <div class="loading" id="loading" hidden>
+      <div class="loading__ring" aria-hidden="true"></div>
+      <p id="loading-text">Reading the streets…</p>
+    </div>
+
+    <button class="panel-toggle" id="panel-toggle" type="button" aria-label="Toggle controls">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 7h16M4 12h16M4 17h16" />
+      </svg>
+    </button>
+
+    <script src="/vendor/leaflet.js"></script>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
