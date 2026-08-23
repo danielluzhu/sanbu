@@ -67,6 +67,15 @@ gradient; **Take me up** discounts climbing *and* biases the turnaround anchor t
 ground, which is what actually produces a summit loop. Walking time uses a Naismith-style
 model: flat pace plus 7 seconds per metre climbed, with stairways walked slower.
 
+### Photographs
+
+Markers and the stop chips carry a photo of the place, found by geosearching
+[Wikimedia Commons](https://commons.wikimedia.org) around each stop's coordinate — Commons
+indexes images by where they were taken, so this needs no API key and no per-feature tagging.
+Diagrams, maps and plaques are filtered out by title and file type. Photos load after the route
+is already drawn, so they never hold up a walk, and author and licence are shown because most
+Commons licences require attribution.
+
 ## How a loop gets built
 
 A round trip is two legs:
@@ -144,6 +153,7 @@ no server to keep running, and it costs nothing.
 - [OpenStreetMap](https://openstreetmap.org/copyright) via Overpass — streets and features (ODbL)
 - [DataSF](https://data.sfgov.org) — Vision Zero High Injury Network
 - [Open-Meteo](https://open-meteo.com/) and [OpenTopoData](https://www.opentopodata.org/) — elevation
+- [Wikimedia Commons](https://commons.wikimedia.org) — photographs, per their individual licences
 - [CARTO](https://carto.com/attributions) — dark basemap tiles
 
 ## Limits
@@ -153,4 +163,5 @@ no server to keep running, and it costs nothing.
 - Overpass is a free public endpoint with rate limits. Queries are serialised behind a queue and
   cached in IndexedDB to stay well inside them.
 - Scenic scores come from OSM coverage. A viewpoint nobody has mapped does not exist here.
+- Photos depend on Commons coverage. Well-known places have them; a quiet mini park may not.
 - Terrain on a 90m lattice smooths the sharpest pitches; gradients are capped at 45%.

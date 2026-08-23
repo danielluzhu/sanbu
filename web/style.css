@@ -416,6 +416,25 @@ body {
   font-size: 13px;
   line-height: 1;
 }
+/* Replaces the glyph once a photo has loaded for that stop. */
+.chip__thumb {
+  width: 22px;
+  height: 22px;
+  margin: -3px 0 -3px -4px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.06);
+  animation: thumb-in 0.35s ease;
+}
+@keyframes thumb-in {
+  from {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+}
+.chip.has-photo {
+  border-color: rgba(255, 196, 107, 0.28);
+}
 .chip__at {
   color: var(--faint);
   font-size: 11px;
@@ -489,6 +508,34 @@ body {
 }
 .leaflet-popup-content b {
   font-weight: 600;
+}
+
+/* Photo pulled from Wikimedia Commons for the place under the marker. */
+.popup-photo {
+  display: block;
+  margin: -10px -13px 9px;
+  overflow: hidden;
+  border-radius: 11px 11px 0 0;
+  background: rgba(255, 255, 255, 0.04);
+  line-height: 0;
+}
+.popup-photo img {
+  display: block;
+  width: 100%;
+  height: 148px;
+  object-fit: cover;
+  transition: transform 0.4s ease;
+}
+.popup-photo:hover img {
+  transform: scale(1.04);
+}
+.popup-credit {
+  margin-top: 6px !important;
+  font-size: 9.5px !important;
+  color: var(--faint) !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .leaflet-popup-content em {
   display: block;

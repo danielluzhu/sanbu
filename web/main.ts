@@ -13,6 +13,7 @@ import { buildGraph, type WalkGraph } from "../src/graph";
 import { planLoop, type Preferences, type RouteStop, type Walk } from "../src/route";
 import { haversine, type LatLon } from "../src/geo";
 import { IndexedDbStore, setStore } from "../src/store";
+import { findPhotos, type Photo } from "../src/photos";
 
 setStore(new IndexedDbStore());
 
@@ -285,6 +286,7 @@ function renderWalk(walk: Walk): void {
   renderStats(walk);
   renderProfile(walk);
   renderStops(walk.stops);
+  loadPhotos(walk.stops);
 
   els.results.hidden = false;
 
@@ -350,10 +352,31 @@ function gradientAt(stops: Array<[number, number, number]>, t: number): string {
   return `rgb(${mix[0]}, ${mix[1]}, ${mix[2]})`;
 }
 
+const stopMarkers = new Map<RouteStop, L.Marker>();
+
+function popupHtml(stop: RouteStop, photo?: Photo | null): string {
+  const head =
+    `<b>${escapeHtml(stop.name)}</b>` +
+    `<em>${labelFor(stop.kind)} · ${fmtDistance(stop.at)} in</em>`;
+  if (!photo) return head;
+
+  const credit = [photo.author, photo.license]
+    .filter((v): v is string => Boolean(v))
+    .map(escapeHtml)
+    .join(" · ");
+  return (
+    `<a class="popup-photo" href="${escapeHtml(photo.page)}" target="_blank" rel="noopener">` +
+    `<img src="${escapeHtml(photo.url)}" alt="${escapeHtml(stop.name)}" loading="lazy" />` +
+    `</a>${head}` +
+    (credit ? `<em class="popup-credit">${credit} · Wikimedia Commons</em>` : "")
+  );
+}
+
 function drawStops(stops: RouteStop[]): void {
+  stopMarkers.clear();
   stops.forEach((stop) => {
     const icon = STOP_ICONS[stop.kind] ?? "✦";
-    L.marker([stop.lat, stop.lon], {
+    const marker = L.marker([stop.lat, stop.lon], {
       icon: L.divIcon({
         className: "",
         html: `<div class="stop-marker">${icon}</div>`,
@@ -361,10 +384,38 @@ function drawStops(stops: RouteStop[]): void {
         iconAnchor: [13, 13],
       }),
     })
-      .bindPopup(
-        `<b>${escapeHtml(stop.name)}</b><em>${labelFor(stop.kind)} · ${fmtDistance(stop.at)} in</em>`,
-      )
+      .bindPopup(popupHtml(stop), { maxWidth: 300, minWidth: 240 })
       .addTo(markerLayer);
+    stopMarkers.set(stop, marker);
+  });
+}
+
+/**
+ * Photos load after the walk is already on screen. They are a garnish, so they
+ * fill in as they arrive rather than holding up the route.
+ */
+let photoRun = 0;
+
+function loadPhotos(stops: RouteStop[]): void {
+  const run = ++photoRun;
+  // Viewpoints first — they are what someone actually wants to see.
+  const ordered = [...stops].sort(
+    (a, b) => (a.kind === "viewpoint" ? 0 : 1) - (b.kind === "viewpoint" ? 0 : 1),
+  );
+
+  void findPhotos(ordered, (stop, photo) => {
+    // A newer walk has started; discard results for the old one.
+    if (run !== photoRun || !photo) return;
+
+    stopMarkers.get(stop)?.setPopupContent(popupHtml(stop, photo));
+
+    const chip = els.stops.querySelector<HTMLElement>(`.chip[data-i="${stops.indexOf(stop)}"]`);
+    const slot = chip?.querySelector(".chip__icon");
+    if (slot) {
+      slot.outerHTML =
+        `<img class="chip__thumb" src="${escapeHtml(photo.url)}" alt="" loading="lazy" />`;
+      chip?.classList.add("has-photo");
+    }
   });
 }
 
