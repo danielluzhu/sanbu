@@ -2,9 +2,15 @@
 import { cached } from "./store";
 import type { LatLon } from "./geo";
 
+/**
+ * Mirrors must send `Access-Control-Allow-Origin`, because this runs in the
+ * browser. Several popular Overpass mirrors (kumi.systems, private.coffee) do
+ * not, and a failover to one of those fails outright at the CORS layer rather
+ * than returning an error we can retry — verify before adding one here.
+ */
 const ENDPOINTS = [
   "https://overpass-api.de/api/interpreter",
-  "https://overpass.kumi.systems/api/interpreter",
+  "https://overpass.osm.ch/api/interpreter",
 ];
 
 const WEEK = 7 * 24 * 60 * 60 * 1000;
