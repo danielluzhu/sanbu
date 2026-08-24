@@ -9,8 +9,12 @@
 # `gh auth refresh -h github.com -s workflow` has been run, .github/workflows/
 # can be pushed and this script becomes redundant.
 #
-#   bun run deploy
+#   bun run deploy            build, publish, wait for Pages, verify
+#   bun run deploy --no-wait  build and publish only (used by the git hook)
 set -euo pipefail
+
+WAIT=1
+[[ "${1:-}" == "--no-wait" ]] && WAIT=0
 
 REMOTE="https://github.com/danielluzhu/sanbu.git"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -44,8 +48,13 @@ git -C dist -c user.name="$(git config user.name)" \
 git -C dist push -q -f "$REMOTE" gh-pages:gh-pages
 rm -rf dist/.git
 
+if [[ $WAIT -eq 0 ]]; then
+  # Pushing gh-pages triggers the Pages build by itself; nothing to wait for.
+  echo "==> main $SHA · gh-pages pushed"
+  exit 0
+fi
+
 echo "==> Waiting for GitHub Pages"
-gh api -X POST repos/danielluzhu/sanbu/pages/builds >/dev/null 2>&1 || true
 for _ in $(seq 1 40); do
   status="$(gh api repos/danielluzhu/sanbu/pages/builds/latest --jq '.status' 2>/dev/null || echo '')"
   [[ "$status" == "built" ]] && break

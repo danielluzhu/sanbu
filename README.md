@@ -156,13 +156,25 @@ features from Overpass. After that IndexedDB serves them and replanning is under
 ### Publishing
 
 ```bash
-bun run deploy          # typecheck, build, push main, publish dist/ to gh-pages
+bun run hooks:install   # once per clone — publish every commit automatically
+bun run deploy          # manual publish: build, push main, publish dist/ to gh-pages
+bun run sync:check      # is GitHub consistent with this machine?
 ```
 
-Publishing through GitHub Actions needs a token with the `workflow` scope. The workflow is
-written and sits at `.github/workflows/pages.yml`, but until
-`gh auth refresh -h github.com -s workflow` has been run it cannot be pushed, so `bun run deploy`
-does the same job from here.
+With the hook installed, committing is all that is needed — a `post-commit` hook builds and
+pushes both branches. It stands down mid-rebase, merge, cherry-pick and bisect so intermediate
+commits are not each published, and `SANBU_NO_DEPLOY=1 git commit …` skips it for one commit. A
+failed publish never makes the commit look failed; it prints what to rerun. Hooks live in
+`.git/hooks`, which git does not track, so `hooks:install` is needed once per clone.
+
+`sync:check` verifies the four things that can drift: an unclean working tree, `main` versus
+`origin/main`, whether the published `gh-pages` build came from the current `main` (the deploy
+commit records the source sha), and whether the site actually answers.
+
+Publishing through GitHub Actions would be simpler, but it needs a token with the `workflow`
+scope. The workflow is written and sits at `.github/workflows/pages.yml`; until
+`gh auth refresh -h github.com -s workflow` has been run it cannot be pushed — not by git, and
+not through the API either, which answers 404. So the scripts above do the same job from here.
 
 ### Regenerating the baked data
 

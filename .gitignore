@@ -2,3 +2,6 @@ node_modules/
 dist/
 .env
 .cache/
+
+# Machine-local Claude Code permissions, not project configuration.
+.claude/settings.local.json

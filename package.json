@@ -9,7 +9,10 @@
     "serve": "bun src/server.ts",
     "build:hin": "bun run scripts/build-hin.ts",
     "typecheck": "tsc --noEmit",
-    "deploy": "bash scripts/deploy.sh"
+    "deploy": "bash scripts/deploy.sh",
+    "sync:check": "bash scripts/sync-check.sh",
+    "hooks:install": "bash scripts/install-hooks.sh",
+    "hooks:uninstall": "bash scripts/install-hooks.sh uninstall"
   },
   "dependencies": {
     "leaflet": "^1.9.4"
