@@ -14,6 +14,7 @@ import { planWalks, stepsFor, type Preferences, type RouteStop, type Walk } from
 import { haversine, type LatLon } from "../src/geo";
 import { IndexedDbStore, setStore } from "../src/store";
 import { findPhotos, type Photo } from "../src/photos";
+import { loadHin, type HinSegment } from "../src/hin";
 
 setStore(new IndexedDbStore());
 
@@ -84,6 +85,154 @@ L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
 const routeLayer = L.layerGroup().addTo(map);
 const markerLayer = L.layerGroup().addTo(map);
 let startMarker: L.Marker | null = null;
+
+/* ---------- High Injury Network overlay ---------- */
+
+/**
+ * San Francisco's High Injury Network drawn over the map — the streets that
+ * account for most severe and fatal traffic injuries, and the same data the
+ * router already weights against.
+ *
+ * Rendered to a canvas rather than SVG: this is ~6,000 line strings and around
+ * 19,000 vertices, which is enough individual DOM paths to make panning stutter.
+ */
+const riskLayer = L.layerGroup();
+const riskRenderer = L.canvas({ padding: 0.15 });
+let riskBusy = false;
+
+/** Each segment kept with a precomputed bounding box for fast viewport tests. */
+interface RiskSegment {
+  line: L.LatLngTuple[];
+  south: number;
+  west: number;
+  north: number;
+  east: number;
+}
+
+let riskSegments: RiskSegment[] | null = null;
+
+async function loadRiskSegments(): Promise<RiskSegment[]> {
+  if (riskSegments) return riskSegments;
+  const segments: HinSegment[] = await loadHin();
+  riskSegments = segments.map((seg) => {
+    let south = Infinity;
+    let west = Infinity;
+    let north = -Infinity;
+    let east = -Infinity;
+    const line: L.LatLngTuple[] = [];
+    for (const p of seg.pts) {
+      line.push([p.lat, p.lon]);
+      if (p.lat < south) south = p.lat;
+      if (p.lat > north) north = p.lat;
+      if (p.lon < west) west = p.lon;
+      if (p.lon > east) east = p.lon;
+    }
+    return { line, south, west, north, east };
+  });
+  return riskSegments;
+}
+
+/**
+ * Redraws the overlay for the current view.
+ *
+ * Drawing all ~19,000 vertices on every frame halved the pan rate, so only the
+ * segments overlapping the viewport are handed to the canvas, and the soft wide
+ * pass is skipped when zoomed out — that is exactly where the most geometry is
+ * on screen and where the glow adds least.
+ */
+function refreshRisk(): void {
+  if (!riskSegments || !map.hasLayer(riskLayer)) return;
+
+  const b = map.getBounds().pad(0.2);
+  const south = b.getSouth();
+  const west = b.getWest();
+  const north = b.getNorth();
+  const east = b.getEast();
+
+  const lines: L.LatLngTuple[][] = [];
+  for (const seg of riskSegments) {
+    if (seg.north < south || seg.south > north || seg.east < west || seg.west > east) continue;
+    lines.push(seg.line);
+  }
+
+  riskLayer.clearLayers();
+  if (lines.length === 0) return;
+
+  const zoom = map.getZoom();
+  if (zoom >= 14) {
+    L.polyline(lines, {
+      renderer: riskRenderer,
+      color: "#ff2d55",
+      weight: 9,
+      opacity: 0.16,
+      lineCap: "round",
+      lineJoin: "round",
+      interactive: false,
+    }).addTo(riskLayer);
+  }
+
+  L.polyline(lines, {
+    renderer: riskRenderer,
+    color: "#ff5b6e",
+    weight: zoom >= 14 ? 2.2 : 1.6,
+    opacity: zoom >= 14 ? 0.72 : 0.62,
+    lineCap: "round",
+    lineJoin: "round",
+    interactive: false,
+  }).addTo(riskLayer);
+}
+
+map.on("moveend zoomend", refreshRisk);
+
+async function toggleRisk(on: boolean): Promise<void> {
+  const button = document.getElementById("risk-toggle");
+  const legend = document.getElementById("risk-legend");
+
+  if (!on) {
+    map.removeLayer(riskLayer);
+    riskLayer.clearLayers();
+    button?.classList.remove("is-active");
+    button?.setAttribute("aria-pressed", "false");
+    if (legend) legend.hidden = true;
+    return;
+  }
+
+  if (riskBusy) return;
+  riskBusy = true;
+  button?.classList.add("is-loading");
+  try {
+    await loadRiskSegments();
+    riskLayer.addTo(map);
+    refreshRisk();
+    button?.classList.add("is-active");
+    button?.setAttribute("aria-pressed", "true");
+    if (legend) legend.hidden = false;
+  } catch (err) {
+    showToast(`Could not load the injury data. ${(err as Error).message}`);
+  } finally {
+    riskBusy = false;
+    button?.classList.remove("is-loading");
+  }
+}
+
+const RiskControl = L.Control.extend({
+  options: { position: "topright" as L.ControlPosition },
+  onAdd() {
+    const wrap = L.DomUtil.create("div", "leaflet-bar risk-control");
+    wrap.innerHTML =
+      `<button id="risk-toggle" type="button" aria-pressed="false" ` +
+      `title="Show streets with the most severe traffic injuries">` +
+      `<span class="risk-control__dot" aria-hidden="true"></span>Risk</button>`;
+    // Without this a click on the button also pans or zooms the map beneath it.
+    L.DomEvent.disableClickPropagation(wrap);
+    wrap.addEventListener("click", () => {
+      void toggleRisk(!document.getElementById("risk-toggle")?.classList.contains("is-active"));
+    });
+    return wrap;
+  },
+});
+
+map.addControl(new RiskControl());
 
 map.on("click", (e: L.LeafletMouseEvent) =>
   setOrigin(e.latlng.lat, e.latlng.lng, "Pinned on the map"),

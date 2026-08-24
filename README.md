@@ -67,6 +67,21 @@ gradient; **Take me up** discounts climbing *and* biases the turnaround anchor t
 ground, which is what actually produces a summit loop. Walking time uses a Naismith-style
 model: flat pace plus 7 seconds per metre climbed, with stairways walked slower.
 
+### The risk overlay
+
+The **Risk** button on the map draws the High Injury Network over the city — the same data the
+router weights against, made visible so you can see why a walk went the way it did.
+
+It is labelled for what it is. This is *traffic* injury data from SFMTA and DPH: the streets
+where people get hit by vehicles. It is not a crime map and the UI says so, because a red
+overlay on a city map invites exactly that misreading.
+
+Two things make it usable rather than a slideshow. It renders to a **canvas** instead of SVG —
+~6,000 line strings is far too many individual DOM paths to pan smoothly — and only the segments
+overlapping the current viewport are handed to the renderer. Drawing all ~19,000 vertices every
+frame halved the pan rate in testing (30fps to 15); culling to the viewport and dropping the
+soft glow pass below zoom 14 brought it back to 23.
+
 ### Photographs
 
 Markers and the stop chips carry a photo of the place, found by geosearching

@@ -86,6 +86,103 @@ body {
   background: rgba(40, 46, 58, 0.9) !important;
 }
 
+/* ---------- Risk overlay control ---------- */
+
+.risk-control {
+  margin-top: 8px !important;
+  margin-right: 20px !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 12px !important;
+  overflow: hidden;
+  box-shadow: var(--shadow) !important;
+}
+.risk-control button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 11px;
+  height: 34px;
+  border: 0;
+  background: var(--glass);
+  backdrop-filter: blur(14px);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.16s, color 0.16s;
+}
+.risk-control button:hover {
+  background: rgba(40, 46, 58, 0.9);
+  color: var(--text);
+}
+.risk-control button.is-active {
+  background: rgba(255, 45, 85, 0.18);
+  color: #ff8a99;
+}
+.risk-control__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--faint);
+  transition: background 0.16s, box-shadow 0.16s;
+}
+.risk-control button.is-active .risk-control__dot {
+  background: #ff2d55;
+  box-shadow: 0 0 0 3px rgba(255, 45, 85, 0.22);
+}
+.risk-control button.is-loading .risk-control__dot {
+  animation: pulse-dot 0.9s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.risk-legend {
+  position: absolute;
+  top: 108px;
+  right: 20px;
+  z-index: 600;
+  width: 232px;
+  padding: 13px 15px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--glass);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  box-shadow: var(--shadow);
+  animation: rise 0.3s;
+}
+.risk-legend__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+.risk-legend__swatch {
+  flex: none;
+  width: 18px;
+  height: 3px;
+  border-radius: 99px;
+  background: #ff5b6e;
+  box-shadow: 0 0 0 3px rgba(255, 45, 85, 0.16);
+}
+.risk-legend p {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.risk-legend small {
+  display: block;
+  margin-top: 7px;
+  font-size: 9.5px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+
 /* ---------- Control panel ---------- */
 
 .panel {
@@ -793,6 +890,17 @@ body {
   }
   .leaflet-control-zoom {
     display: none;
+  }
+  .risk-control {
+    margin-top: 20px !important;
+    margin-right: 12px !important;
+  }
+  .risk-legend {
+    top: auto;
+    right: 12px;
+    bottom: 86px;
+    left: 12px;
+    width: auto;
   }
   .panel-toggle {
     top: auto;
