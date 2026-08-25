@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>sanbu — the scenic way round</title>
+    <meta
+      name="description"
+      content="Loop walks in San Francisco routed for the hour you set off — golden-hour viewpoints, shops that are open when you pass, and lit streets after dark."
+    />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0d12'/%3E%3Cpath d='M7 22c4-1 5-8 9-8s5 5 9 3' stroke='%23ffc46b' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='24' cy='11' r='2.5' fill='%23ff7d5c'/%3E%3C/svg%3E" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+  <link rel="stylesheet" crossorigin href="./chunk-qwknm3h8.css"><script type="module" crossorigin src="./chunk-92xvq8kt.js"></script></head>
+  <body>
+    <div id="map" aria-label="Map of your walk"></div>
+
+    <!-- Control panel -->
+    <aside class="panel" id="panel">
+      <header class="panel__head">
+        <h1 class="wordmark">sanbu<span class="wordmark__dot">.</span></h1>
+        <p class="tagline">The scenic way round — San Francisco</p>
+      </header>
+
+      <button class="locate" id="locate" type="button">
+        <span class="locate__dot" aria-hidden="true"></span>
+        <span class="locate__text">
+          <strong id="locate-label">Use my location</strong>
+          <small id="locate-sub">or tap the map to drop a pin</small>
+        </span>
+      </button>
+
+      <div class="field">
+        <label class="field__label" for="time-group">How long have you got?</label>
+        <div class="segmented" id="time-group" role="radiogroup" aria-label="Walk length">
+          <button type="button" role="radio" data-minutes="20" aria-checked="false">20m</button>
+          <button
+            type="button"
+            role="radio"
+            data-minutes="40"
+            aria-checked="true"
+            class="is-active"
+          >
+            40m
+          </button>
+          <button type="button" role="radio" data-minutes="60" aria-checked="false">60m</button>
+          <button type="button" role="radio" data-minutes="90" aria-checked="false">90m</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="field__row">
+          <label class="field__label" for="start-time">Setting off</label>
+          <span class="field__value" id="start-value">Now</span>
+        </div>
+        <div class="timepick">
+          <button type="button" id="start-now" class="timepick__now is-active">Now</button>
+          <input
+            type="time"
+            id="start-time"
+            class="timepick__input"
+            step="300"
+            aria-label="Time you set off, San Francisco time"
+          />
+        </div>
+
+        <!--
+          The day at a glance: night, twilight, golden hour and daylight across
+          24 hours, with the walk's own window marked on it.
+        -->
+        <div class="sun" id="sun">
+          <div class="sun__bar" id="sun-bar">
+            <span class="sun__window" id="sun-window"></span>
+          </div>
+          <div class="sun__marks" id="sun-marks"></div>
+        </div>
+        <p class="daynote" id="daynote"></p>
+      </div>
+
+      <div class="field">
+        <div class="field__row">
+          <label class="field__label" for="scenic">Priority</label>
+          <span class="field__value" id="scenic-value">Balanced</span>
+        </div>
+        <input
+          id="scenic"
+          class="slider"
+          type="range"
+          min="0"
+          max="100"
+          value="60"
+          aria-describedby="scenic-ends"
+        />
+        <div class="slider__ends" id="scenic-ends">
+          <span>Safest streets</span>
+          <span>Best views</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="field__label" for="trip">Trip</label>
+        <div class="toggle" id="trip">
+          <button type="button" data-trip="loop" class="is-active">Round trip</button>
+          <button type="button" data-trip="oneway">One way</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="field__label" for="hills">Hills</label>
+        <div class="toggle" id="hills">
+          <button type="button" data-hills="avoid" class="is-active">Spare my legs</button>
+          <button type="button" data-hills="seek">Take me up</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="field__row">
+          <label class="field__label" for="height">Your height</label>
+          <span class="field__value" id="height-value">173 cm</span>
+        </div>
+        <input
+          id="height"
+          class="slider slider--plain"
+          type="range"
+          min="140"
+          max="210"
+          step="1"
+          value="173"
+        />
+        <div class="slider__ends"><span>for the step estimate</span><span id="height-alt"></span></div>
+      </div>
+
+      <button class="go" id="go" type="button">
+        <span id="go-label">Walk me</span>
+      </button>
+
+      <p class="note" id="note">
+        Routed on OpenStreetMap, weighted by SF's Vision&nbsp;Zero High Injury
+        Network and by what is open when you get there.
+      </p>
+    </aside>
+
+    <!-- Results -->
+    <section class="results" id="results" hidden aria-live="polite">
+      <div class="routes" id="routes" role="tablist" aria-label="Route options"></div>
+      <div class="results__stats" id="stats"></div>
+      <div class="results__profile">
+        <svg id="profile" viewBox="0 0 600 60" preserveAspectRatio="none" role="img">
+          <title>Elevation profile of the walk</title>
+        </svg>
+        <div class="profile__caption" id="profile-caption"></div>
+      </div>
+      <!-- Historic and cultural districts the route runs through, as areas. -->
+      <p class="districts" id="districts" hidden></p>
+      <div class="results__stops" id="stops"></div>
+    </section>
+
+    <!--
+      Named for what the data actually is. It is SF's Vision Zero High Injury
+      Network — severe and fatal *traffic* injuries — not crime, and it should
+      not be read as one.
+    -->
+    <aside class="risk-legend" id="risk-legend" hidden>
+      <div class="risk-legend__head">
+        <span class="risk-legend__swatch" aria-hidden="true"></span>
+        <strong>High Injury Network</strong>
+      </div>
+      <p>
+        The ~12% of San Francisco streets where most severe and fatal traffic
+        injuries happen. Traffic risk on foot — not crime.
+      </p>
+      <small>SFMTA &amp; DPH via DataSF · the same data sanbu routes around</small>
+    </aside>
+
+    <div class="toast" id="toast" hidden role="status"></div>
+
+    <div class="loading" id="loading" hidden>
+      <div class="loading__ring" aria-hidden="true"></div>
+      <p id="loading-text">Reading the streets…</p>
+    </div>
+
+    <button class="panel-toggle" id="panel-toggle" type="button" aria-label="Toggle controls">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 7h16M4 12h16M4 17h16" />
+      </svg>
+    </button>
+
+    
+  </body>
+</html>
