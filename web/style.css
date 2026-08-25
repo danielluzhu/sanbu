@@ -622,6 +622,25 @@ body {
   color: var(--faint);
 }
 
+/* Districts the route runs through — ground you are on, not a place you stop. */
+.districts {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.districts strong {
+  color: var(--text);
+  font-weight: 500;
+}
+.districts__icon {
+  color: var(--amber);
+}
+.districts__year {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
 .results__stops {
   display: flex;
   gap: 8px;
@@ -804,6 +823,19 @@ body {
 }
 .popup-when {
   font-variant-numeric: tabular-nums;
+}
+/* Year, style and architect of a designated landmark. */
+.popup-facts {
+  color: var(--amber) !important;
+}
+/* The city's own paragraph on why the building matters. */
+.popup-story {
+  margin: 7px 0 0;
+  padding-top: 7px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.55;
 }
 .popup-when--open {
   color: var(--mint) !important;

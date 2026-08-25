@@ -13,6 +13,13 @@ import {
   type ScenicFeature,
 } from "./overpass";
 import { HinIndex, loadHin } from "./hin";
+import {
+  DistrictIndex,
+  landmarkGrid,
+  loadLandmarks,
+  type District,
+  type Landmark,
+} from "./landmarks";
 import { SpatialGrid, bboxAround, haversine, metresPerDegree, type LatLon } from "./geo";
 
 export interface GraphNode extends LatLon {
@@ -80,7 +87,9 @@ const SCENIC_RULES: Record<string, { radius: number; weight: number }> = {
   garden: { radius: 110, weight: 0.5 },
   water: { radius: 220, weight: 0.6 },
   beach: { radius: 260, weight: 0.7 },
-  historic: { radius: 90, weight: 0.3 },
+  // Graded by `significance`, so the radius and weight here are what a site of
+  // national standing earns; a bench plaque gets a fraction of both.
+  historic: { radius: 130, weight: 0.5 },
   artwork: { radius: 80, weight: 0.3 },
   attraction: { radius: 120, weight: 0.35 },
   tree: { radius: 35, weight: 0.1 },
@@ -91,6 +100,18 @@ const SCENIC_RULES: Record<string, { radius: number; weight: number }> = {
   market: { radius: 90, weight: 0.45 },
   shop: { radius: 60, weight: 0.28 },
   culture: { radius: 110, weight: 0.5 },
+  // A building the city has formally designated. Reaches further than a
+  // generic historic tag and counts for more, because it has been judged.
+  landmark: { radius: 170, weight: 0.7 },
+};
+
+/**
+ * Being inside a historic or cultural district. Containment, not proximity, so
+ * this is applied whole rather than falling off with distance.
+ */
+const DISTRICT_WEIGHT: Record<District["kind"], number> = {
+  historic: 0.34,
+  cultural: 0.3,
 };
 
 /** Feature kinds whose worth rises and falls with the hour. */
@@ -108,6 +129,8 @@ const TIME_SENSITIVE = new Set([
   "market",
   "shop",
   "culture",
+  "landmark",
+  "district",
 ]);
 
 /**
@@ -152,18 +175,22 @@ const ARTERIAL: Record<string, number> = {
 export async function buildGraph(centre: LatLon, radiusM: number): Promise<WalkGraph> {
   const bbox = bboxAround(centre, radiusM);
 
-  const [network, scenery, places, hinSegments, lattice] = await Promise.all([
+  const [network, scenery, places, hinSegments, landmarkData, lattice] = await Promise.all([
     fetchWalkNetwork(bbox),
     fetchScenicFeatures(bbox),
     fetchPlaces(bbox),
     loadHin(),
+    loadLandmarks(),
     warmElevation(bbox),
   ]);
 
-  const features = [...scenery, ...places];
+  const designated = designatedFeatures(landmarkData.landmarks, bbox);
+  const features = [...scenery, ...places, ...designated];
   measureProminence(features, lattice);
+  dropDuplicatesOf(features, designated, centre.lat);
 
   const hin = new HinIndex(hinSegments, centre.lat);
+  const districts = new DistrictIndex(landmarkData.districts);
 
   const coords = new Map<number, LatLon>();
   for (const n of network.nodes) coords.set(n.id, { lat: n.lat, lon: n.lon });
@@ -190,6 +217,20 @@ export async function buildGraph(centre: LatLon, radiusM: number): Promise<WalkG
 
   const featureGrid = new SpatialGrid<ScenicFeature>(60, centre.lat);
   featureGrid.insertAll(features);
+
+  // One synthetic feature per district, reused by every edge inside it, so a
+  // district is scored and named exactly like anything else on the map.
+  const districtFeatures = new Map<District, ScenicFeature>();
+  for (const d of landmarkData.districts) {
+    districtFeatures.set(d, {
+      id: `district:${d.kind}:${d.name}`,
+      kind: "district",
+      name: d.name,
+      lat: d.centre.lat,
+      lon: d.centre.lon,
+      district: d,
+    });
+  }
 
   const link = (nodeId: number, edgeId: number) => {
     const list = adjacency.get(nodeId);
@@ -253,6 +294,8 @@ export async function buildGraph(centre: LatLon, radiusM: number): Promise<WalkG
           carFree,
           featureGrid,
           hin,
+          districts,
+          districtFeatures,
           stepsPerMetre,
         );
         if (edge.length > 0) {
@@ -281,6 +324,8 @@ function makeEdge(
   carFree: boolean,
   featureGrid: SpatialGrid<ScenicFeature>,
   hin: HinIndex,
+  districts: DistrictIndex,
+  districtFeatures: Map<District, ScenicFeature>,
   stepsPerMetre?: number,
 ): Edge {
   let length = 0;
@@ -294,6 +339,15 @@ function makeEdge(
   const onHin = samples.some((s) => hin.isHighInjury(s));
 
   const { base, timed, credits } = scoreScenery(samples, featureGrid, carFree, isSteps);
+
+  // Districts are tested at the middle of the edge only: they are neighbourhood
+  // sized, and three ray-casts per edge to learn the same answer is waste.
+  for (const d of districts.at(samples[1]!)) {
+    const feature = districtFeatures.get(d);
+    if (!feature) continue;
+    timed.push({ feature, weight: DISTRICT_WEIGHT[d.kind] });
+    credits.push(feature);
+  }
   const hazard = scoreHazard(tags, highway, carFree, onHin);
 
   // The daylight-with-everything-open reading, for display and for ranking
@@ -338,6 +392,57 @@ function isUnlit(highway: string, tags: Record<string, string>): boolean {
   if (tags.lit === "no") return true;
   if (tags.lit) return false;
   return highway === "path" || highway === "track";
+}
+
+/**
+ * The city's designated landmarks, as ordinary scenic features so that every
+ * downstream step — scoring, credits, stops, photographs, the time of day —
+ * treats them like anything else on the map.
+ */
+function designatedFeatures(
+  landmarks: Landmark[],
+  bbox: [number, number, number, number],
+): ScenicFeature[] {
+  const [south, west, north, east] = bbox;
+  const out: ScenicFeature[] = [];
+  for (const l of landmarks) {
+    if (l.lat < south || l.lat > north || l.lon < west || l.lon > east) continue;
+    out.push({
+      id: `landmark:${l.number ?? l.name}`,
+      kind: "landmark",
+      name: l.name,
+      lat: l.lat,
+      lon: l.lon,
+      landmark: l,
+    });
+  }
+  return out;
+}
+
+/**
+ * Removes OpenStreetMap historic entries that are plainly the same building as
+ * a designated landmark standing on top of them.
+ *
+ * Both would otherwise score — they are different `kind`s, and scoring keeps
+ * the best of each kind — and the walk would list one building twice under two
+ * spellings of its name.
+ */
+function dropDuplicatesOf(
+  features: ScenicFeature[],
+  designated: ScenicFeature[],
+  refLat: number,
+): void {
+  if (designated.length === 0) return;
+  const grid = landmarkGrid(
+    designated.map((f) => f.landmark!).filter(Boolean),
+    refLat,
+  );
+
+  for (let i = features.length - 1; i >= 0; i--) {
+    const f = features[i]!;
+    if (f.kind !== "historic" && f.kind !== "attraction") continue;
+    if (grid.within(f.lat, f.lon, 45).length > 0) features.splice(i, 1);
+  }
 }
 
 /**
@@ -386,9 +491,15 @@ function scoreScenery(
           treeCount++;
           continue;
         }
+        // A minor site is worth less *and* pulls from less far away: you would
+        // cross the street for a plaque and two blocks for a landmark.
+        const significance = f.significance ?? 1;
+        const reach = rule.radius * (0.45 + 0.55 * significance);
         const d = haversine(s, f);
-        // Linear falloff: full weight on top of it, nothing at the radius.
-        const contribution = rule.weight * (1 - d / rule.radius);
+        if (d >= reach) continue;
+
+        // Linear falloff: full weight on top of it, nothing at the reach.
+        const contribution = rule.weight * significance * (1 - d / reach);
         if (contribution > (best.get(kind) ?? 0)) {
           best.set(kind, contribution);
           credits.set(kind, f);

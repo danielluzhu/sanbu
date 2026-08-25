@@ -17,6 +17,7 @@ import { haversine, SpatialGrid, type LatLon } from "./geo";
 import type { ScenicFeature } from "./overpass";
 import { DayContext, isVenue } from "./timeofday";
 import { openStatus, type OpenState } from "./opening";
+import type { Landmark } from "./landmarks";
 
 export interface Preferences {
   /** 0 = play it safe, 1 = chase the views. */
@@ -46,6 +47,8 @@ export interface RouteStop {
   closesAt?: number;
   /** When it opens again, if it is shut when you arrive. */
   opensAt?: number;
+  /** The city's record, for a designated landmark: year, style, architect, history. */
+  landmark?: Landmark;
 }
 
 export interface Walk {
@@ -96,6 +99,13 @@ export interface Walk {
   darkMetres: number;
   /** Metres of that darkness on streets nothing lights. */
   unlitDarkMetres: number;
+  /**
+   * Designated landmarks and named historic sites met along the way, counted
+   * together — the city's list and OpenStreetMap's long tail.
+   */
+  landmarkCount: number;
+  /** Historic and cultural districts the route passes through, in order. */
+  districts: Array<{ name: string; kind: "historic" | "cultural"; year?: number }>;
   /** Per-sample elevation for the profile strip, paired with distance. */
   profile: Array<{ d: number; ele: number }>;
 }
@@ -338,6 +348,7 @@ export interface Anchor {
  */
 const ANCHOR_APPEAL: Record<string, number> = {
   viewpoint: 1.0,
+  landmark: 0.8,
   beach: 0.85,
   water: 0.5,
   park: 0.5,
@@ -350,6 +361,9 @@ const ANCHOR_APPEAL: Record<string, number> = {
   historic: 0.3,
   attraction: 0.4,
   artwork: 0.2,
+  // Not a destination in itself — you cannot arrive "at" a district — but
+  // finishing inside one is better than finishing outside it.
+  district: 0.2,
 };
 
 /**
@@ -466,6 +480,7 @@ function assemble(
   let goldenScore = 0;
   let darkMetres = 0;
   let unlitDarkMetres = 0;
+  const districts = new Map<string, { name: string; kind: "historic" | "cultural"; year?: number }>();
 
   let cursor = startNode.id;
 
@@ -533,6 +548,19 @@ function assemble(
     }
 
     for (const f of edge.credits) {
+      // A district is somewhere you are, not somewhere you stop. It gets named
+      // for the walk as a whole rather than pinned to a point on the map.
+      if (f.kind === "district") {
+        if (f.district && !districts.has(f.id)) {
+          districts.set(f.id, {
+            name: f.district.name,
+            kind: f.district.kind,
+            year: f.district.year,
+          });
+        }
+        continue;
+      }
+
       if (!f.name && f.kind !== "viewpoint") continue;
       if (stopMap.has(f.id)) continue;
 
@@ -551,6 +579,7 @@ function assemble(
         lon: f.lon,
         at: distance,
         eta: etaMs,
+        landmark: f.landmark,
         open: status.state,
         closesAt: status.closesAt,
         opensAt: status.opensAt,
@@ -591,6 +620,8 @@ function assemble(
     goldenScore,
     darkMetres,
     unlitDarkMetres,
+    landmarkCount: stops.filter((s) => s.kind === "landmark" || s.kind === "historic").length,
+    districts: [...districts.values()],
     profile,
   };
 }
@@ -635,6 +666,11 @@ function judge(walk: Walk, targetSeconds: number, prefs: Preferences): number {
 
   // Catching low sun on something worth looking at.
   score += Math.min(1.1, walk.goldenScore * 1.4);
+
+  // Landmarks and the districts around them. Capped in the same way as the
+  // open-shop bonus — the fourth Victorian adds less than the first.
+  score += 0.7 * Math.min(1, walk.landmarkCount / 4);
+  score += 0.25 * Math.min(1, walk.districts.length / 2);
 
   // Walking unlit streets in the dark is the thing to avoid, not darkness itself.
   if (walk.distance > 0) score -= 1.6 * (walk.unlitDarkMetres / walk.distance);
@@ -700,6 +736,15 @@ function labelWalks(walks: Walk[], ctx: DayContext): void {
     });
   }
   claims.push({ label: "Most open now", pick: (w) => (w.openStops > 0 ? w.openStops : NONE) });
+  claims.push({
+    label: "Most historic",
+    // Districts count for something, but not as much as standing in front of
+    // the building itself.
+    pick: (w) => {
+      const weight = w.landmarkCount + 0.5 * w.districts.length;
+      return weight >= 2 ? weight : NONE;
+    },
+  });
   if (dark) {
     claims.push({
       label: "Best lit",

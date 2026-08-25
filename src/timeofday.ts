@@ -107,7 +107,15 @@ export class DayContext {
    * bucket — finer than that is below the resolution of anything here.
    */
   private moments = new Map<number, Moment>();
-  private values = new Map<string, number>();
+  /**
+   * Per feature, its value indexed by time bucket.
+   *
+   * Keyed on the feature object rather than on a `${id}|${bucket}` string:
+   * this is read once per timed credit per edge relaxation, and building a
+   * string key out of ids like `district:cultural:Castro LGBTQ Cultural
+   * District` cost more than the lookup it was serving.
+   */
+  private values = new WeakMap<ScenicFeature, number[]>();
 
   constructor(startMs: number, place: LatLon) {
     this.start = startMs;
@@ -158,12 +166,18 @@ export class DayContext {
    */
   valueAt(feature: ScenicFeature, elapsedSeconds: number): number {
     const bucket = this.bucket(elapsedSeconds);
-    const key = `${feature.id}|${bucket}`;
-    const cached = this.values.get(key);
-    if (cached !== undefined) return cached;
+
+    let buckets = this.values.get(feature);
+    if (buckets === undefined) {
+      buckets = [];
+      this.values.set(feature, buckets);
+    } else {
+      const cached = buckets[bucket];
+      if (cached !== undefined) return cached;
+    }
 
     const value = this.computeValue(feature, this.momentAt(elapsedSeconds));
-    if (this.values.size < 200_000) this.values.set(key, value);
+    buckets[bucket] = value;
     return value;
   }
 
@@ -203,6 +217,17 @@ export class DayContext {
           if (state === "closed") return 0.08;
         }
         return (0.22 + 0.78 * light) * (1 + 0.25 * golden);
+      }
+      case "landmark":
+        // Architecture wants light on it, and low warm light most of all —
+        // but a designated landmark is still worth passing at any hour.
+        return (0.34 + 0.66 * light) * (1 + 0.3 * golden);
+      case "district": {
+        // A preserved-architecture district is a dark street once the light
+        // goes. A cultural district is a neighbourhood, and neighbourhoods are
+        // still themselves in the evening.
+        const cultural = feature.district?.kind === "cultural";
+        return cultural ? 0.46 + 0.54 * light : 0.24 + 0.76 * light;
       }
       case "historic":
       case "artwork":

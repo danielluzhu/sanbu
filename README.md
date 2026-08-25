@@ -24,14 +24,17 @@ own radius — a viewpoint 40m away counts for much more than one 200m away:
 | --- | --- | --- |
 | Viewpoint | 220m | 1.00 |
 | Beach | 260m | 0.70 |
+| Designated landmark | 170m | 0.70 |
 | Water | 220m | 0.60 |
 | Park | 130m | 0.55 |
 | Museum, gallery, library | 110m | 0.50 |
 | Garden | 110m | 0.50 |
+| Historic site | 130m | 0.50, graded |
 | Marketplace, greengrocer | 90m | 0.45 |
 | Café, bakery, ice cream | 70m | 0.42 |
+| Historic or cultural district | containment | 0.30–0.34 |
 | Attraction | 120m | 0.35 |
-| Historic site / public artwork | 80–90m | 0.30 |
+| Public artwork | 80m | 0.30 |
 | Bar, pub | 60m | 0.30 |
 | Bookshop, florist, record shop… | 60m | 0.28 |
 | Street tree | 35m | 0.10, saturating |
@@ -41,7 +44,49 @@ cannot out-score an actual panorama. Traffic-separated paths get +0.25 and stair
 top.
 
 Those are the weights a feature earns **at its best**. What it is worth on your walk depends on
-when you get there.
+how much it matters and on when you get there.
+
+### Landmarks and districts
+
+OpenStreetMap files the San Francisco Mint and a bench plaque under the same `historic=*` tag. In
+one 2.8km test area, thirty of the forty-nine historic features were `historic=memorial` — mostly
+markers — and weighting all of them alike is how a walk ends up routed past plaques while missing
+Mission Dolores.
+
+Two things fix that.
+
+**The city's own list.** San Francisco designates its landmarks under Article 10 of the Planning
+Code, and publishes the register: 311 adopted landmarks with the year built, the architectural
+style, the architect, the criteria they were listed under and — for 64 of them — a paragraph of
+real history. That is baked into a static asset the same way the High Injury Network is, and the
+landmarks enter the router as ordinary scenic features, so scoring, photographs, arrival times and
+the time-of-day model all apply to them unchanged. Where a designated landmark stands within 45m
+of an OpenStreetMap historic entry, the OSM one steps aside rather than scoring the same building
+twice under two spellings.
+
+The 48 landmarks still listed as "Work Program" are excluded. Being partway through designation is
+not the same as being designated.
+
+**Grading everything else.** OSM features that aren't on the city list are scored by the tags that
+stand in for importance — and both the weight *and* the reach scale with the result, because you
+would cross the street for a plaque and two blocks for a landmark.
+
+| Signal | Significance |
+| --- | --- |
+| `heritage=1` or `2`, or a National Register `ref:nrhp` | 1.00 |
+| Has a `wikipedia` or `wikidata` article | 0.75 |
+| A whole building, church, monument, ship, fort… | 0.50–0.60 |
+| A marker, plaque or milestone | 0.25–0.35 |
+
+**Districts are areas, not points.** Reducing Liberty Hill to a dot at its centre would score the
+middle of it and miss every street that makes it worth walking, so the 14 landmark districts and
+10 cultural districts — Japantown, Calle 24, the Transgender District, Castro LGBTQ and the rest —
+are kept as polygons and tested by containment. Every edge inside one earns the district weight
+whole. They are reported as a sentence rather than as map pins: a district is the ground you are
+on for a stretch of the walk, not a place you stop.
+
+`historic=district` from OSM is dropped outright, because a district reduced to a centroid is
+exactly the mistake this avoids and the city publishes the real boundaries.
 
 ### Time of day
 
@@ -67,6 +112,10 @@ above the horizon.
   everything here.
 - **Parks and gardens** fall away after dusk, and drop to almost nothing where OSM records gate
   hours that have closed.
+- **Landmarks** are architecture, so they want light on them and a little extra during golden
+  hour. **Historic districts** follow the same curve — Jackson Square at midnight is a dark
+  street. **Cultural districts** hold much more of their value after dark, because a
+  neighbourhood is still itself in the evening in a way that preserved masonry is not.
 
 **Opening hours.** Cafés, bakeries, bars, bookshops, markets, museums and libraries are fetched
 with their `opening_hours` and evaluated at your arrival time (`src/opening.ts` handles the
@@ -204,8 +253,8 @@ sector has had a turn, and any candidate sharing more than 55% of its length wit
 already-chosen route is dropped — five variations on the same street is not a choice.
 
 Each is then named for whatever it is best at within the offered set — *Golden hour*, *Most open
-now*, *Best lit*, *Most scenic*, *Safest*, *Most stairways*, *Most car-free*, *Flattest*,
-*Shortest* — one label each, strongest claim first. The three that depend on the hour are only
+now*, *Most historic*, *Best lit*, *Most scenic*, *Safest*, *Most stairways*, *Most car-free*,
+*Flattest*, *Shortest* — one label each, strongest claim first. The three that depend on the hour are only
 offered when the hour makes them true: nothing is called *Golden hour* if it catches none, and
 *Best lit* says nothing useful at two in the afternoon. The alternatives are drawn on the map as faint dashed lines so the choice is visible,
 and you can swipe the cards, click them, or use the arrow keys.
@@ -248,10 +297,11 @@ not through the API either, which answers 404. So the scripts above do the same 
 
 ### Regenerating the baked data
 
-Neither is needed for a normal build — both are committed.
+None of these is needed for a normal build — all are committed.
 
 ```bash
 bun run build:hin          # DataSF High Injury Network -> web/data/hin.json
+bun run build:landmarks    # DataSF landmarks + districts -> web/data/landmarks.json
 bun run scripts/build-elevation.ts   # terrain lattice -> web/data/elevation.json
 ```
 
@@ -265,6 +315,7 @@ src/                Routing engine — no platform assumptions
   graph.ts          OSM ways -> routable graph, split at junctions, scored
   route.ts          Loop generation, cost model, Dijkstra, candidate judging
   hin.ts            Vision Zero High Injury Network + spatial index
+  landmarks.ts      Designated landmarks, district polygons, containment tests
   elevation.ts      Terrain lattice loading and interpolation
   overpass.ts       Overpass access — serialised queue, mirror failover, retries
   geo.ts            Haversine, local planar projection, spatial grid
@@ -274,10 +325,11 @@ web/
   main.ts           Browser entry — UI, map, and the graph cache
   index.html
   style.css
-  data/             Baked HIN and elevation assets
+  data/             Baked HIN, landmark and elevation assets
 scripts/
   build.ts          Bundles the static site into dist/
   build-hin.ts      Regenerates the High Injury Network asset
+  build-landmarks.ts  Regenerates the landmark and district asset
   build-elevation.ts  Regenerates the terrain lattice
 ```
 
@@ -295,7 +347,8 @@ no server to keep running, and it costs nothing.
 
 - [OpenStreetMap](https://openstreetmap.org/copyright) via Overpass — streets, features,
   `opening_hours` and viewpoint `direction` tags (ODbL)
-- [DataSF](https://data.sfgov.org) — Vision Zero High Injury Network
+- [DataSF](https://data.sfgov.org) — Vision Zero High Injury Network (`enwt-3u8m`), Article 10
+  landmarks (`rzic-39gi`), landmark districts (`knm6-5ej6`), cultural districts (`5xmc-5bjj`)
 - [Open-Meteo](https://open-meteo.com/) and [OpenTopoData](https://www.opentopodata.org/) — elevation
 - [Wikimedia Commons](https://commons.wikimedia.org) — photographs, per their individual licences
 - [CARTO](https://carto.com/attributions) — dark basemap tiles
@@ -313,6 +366,11 @@ no server to keep running, and it costs nothing.
 - Overpass is a free public endpoint with rate limits. Queries are serialised behind a queue and
   cached in IndexedDB to stay well inside them.
 - Scenic scores come from OSM coverage. A viewpoint nobody has mapped does not exist here.
+- **Landmark history is thin.** The city has written real prose for 64 of its 311 landmarks; the
+  rest say "Coming Soon!" in the source, and are shown with their year, style and architect but no
+  story rather than with a placeholder. SF Planning's own landmark photographs are deliberately not
+  baked either — the URLs in the register already 404, and 300 rotting links committed to a
+  repository is worse than none.
 - Photos depend on Commons coverage. Well-known places have them; a quiet mini park may not.
 - Terrain on a 90m lattice smooths the sharpest pitches; gradients are capped at 45%.
 - Step counts are an estimate. Stride varies with pace, load and fatigue in ways height alone

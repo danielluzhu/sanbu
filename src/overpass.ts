@@ -2,6 +2,7 @@
 import { cached } from "./store";
 import type { LatLon } from "./geo";
 import { parseDirection } from "./sun";
+import type { District, Landmark } from "./landmarks";
 
 /**
  * Mirrors must send `Access-Control-Allow-Origin`, because this runs in the
@@ -160,7 +161,10 @@ export type FeatureKind =
   | "bar"
   | "market"
   | "shop"
-  | "culture";
+  | "culture"
+  /* A landmark the city has actually designated, and the districts. */
+  | "landmark"
+  | "district";
 
 export interface ScenicFeature extends LatLon {
   id: string;
@@ -172,6 +176,19 @@ export interface ScenicFeature extends LatLon {
   facing?: number;
   /** Metres this point stands above the ground around it. Viewpoints only. */
   prominence?: number;
+  /**
+   * 0..1 — how much this particular one matters, within its kind.
+   *
+   * OpenStreetMap files the San Francisco Mint and a bench plaque under the
+   * same `historic=*` tag, so without this a walk past a plaque scores like a
+   * walk past a national monument. Defaults to 1 for kinds where every member
+   * is equivalent.
+   */
+  significance?: number;
+  /** The city's own record, for a designated landmark. */
+  landmark?: Landmark;
+  /** The district itself, for the synthetic feature representing one. */
+  district?: District;
 }
 
 /**
@@ -188,7 +205,8 @@ export async function fetchScenicFeatures(
   node["tourism"="viewpoint"](${b});
   node["tourism"="artwork"](${b});
   node["natural"="tree"](${b});
-  node["historic"](${b});
+  nwr["historic"](${b});
+  nwr["heritage"](${b});
   node["tourism"="attraction"](${b});
   way["leisure"~"^(park|garden|nature_reserve)$"](${b});
   way["natural"~"^(water|beach|wood)$"](${b});
@@ -197,7 +215,10 @@ export async function fetchScenicFeatures(
 );
 out center tags;`;
 
-  const key = `scenic:${b}`;
+  // v3: `historic` widened from nodes to ways and relations and `heritage`
+  // added (v2), then historic districts excluded as points (v3). Anything
+  // cached under an older key has the wrong features in it.
+  const key = `scenic:v3:${b}`;
   const elements = await cached<RawElement[]>(key, WEEK, () => query(ql));
 
   const out: ScenicFeature[] = [];
@@ -216,6 +237,7 @@ out center tags;`;
       name: t.name,
       opening: t.opening_hours,
       facing: kind === "viewpoint" ? parseDirection(t.direction) : undefined,
+      significance: kind === "historic" ? historicSignificance(t) : undefined,
     });
   }
   return out;
@@ -278,7 +300,41 @@ function classifyPlace(t: Record<string, string>): FeatureKind | null {
   return null;
 }
 
+/**
+ * Historic sites you would cross town for, versus historic sites you would
+ * read in passing.
+ *
+ * OpenStreetMap has no notion of importance, so this reads the tags that stand
+ * in for one: a national heritage grade or a National Register listing is the
+ * strongest signal, then having an encyclopaedia article about you, then being
+ * a whole building rather than a marker, then merely being named.
+ */
+const SUBSTANTIAL = new Set([
+  "building", "church", "chapel", "monastery", "castle", "fort", "citadel",
+  "monument", "ruins", "ship", "aircraft", "tower", "manor", "farm", "mint",
+  "aqueduct", "bridge", "locomotive", "railway_station", "lighthouse", "wreck",
+]);
+
+function historicSignificance(t: Record<string, string>): number {
+  const grade = Number.parseInt(t.heritage ?? "", 10);
+  if ((Number.isFinite(grade) && grade <= 2) || t["ref:nrhp"]) return 1;
+  if (t.wikidata || t.wikipedia) return 0.75;
+
+  let score = SUBSTANTIAL.has(t.historic ?? "") ? 0.5 : 0.25;
+  if (Number.isFinite(grade)) score = Math.max(score, 0.55);
+  if (t.name) score += 0.1;
+  return Math.min(1, score);
+}
+
 function classify(t: Record<string, string>): FeatureKind | null {
+  // A district is an area you are inside, not a point you pass. San Francisco
+  // publishes its own district boundaries as polygons, which is a far better
+  // answer than the centre of a neighbourhood-sized centroid — and this has to
+  // be decided before anything else, because these are commonly also tagged
+  // `tourism=attraction` and would otherwise come through as a landmark pin
+  // dropped in the middle of a neighbourhood.
+  if (t.historic === "district" || t.boundary === "protected_area") return null;
+
   if (t.tourism === "viewpoint") return "viewpoint";
   if (t.natural === "tree") return "tree";
   if (t.natural === "water") return "water";
@@ -288,6 +344,6 @@ function classify(t: Record<string, string>): FeatureKind | null {
   if (t.natural === "wood" || t.landuse === "forest") return "park";
   if (t.tourism === "artwork") return "artwork";
   if (t.tourism === "attraction") return "attraction";
-  if (t.historic) return "historic";
+  if (t.historic || t.heritage) return "historic";
   return null;
 }

@@ -73,6 +73,7 @@ const els = {
   sunWindow: $("sun-window"),
   sunMarks: $("sun-marks"),
   dayNote: $("daynote"),
+  districts: $("districts"),
 };
 
 /* ---------- Map ---------- */
@@ -603,6 +604,8 @@ const STOP_ICONS: Record<string, string> = {
   market: "⊞",
   shop: "▣",
   culture: "◫",
+  landmark: "❖",
+  district: "❖",
 };
 
 /** Switches to one of the offered routes, wrapping at both ends. */
@@ -668,6 +671,7 @@ function renderWalk(walk: Walk): void {
   drawStops(walk.stops);
   renderStats(walk);
   renderProfile(walk);
+  renderDistricts(walk);
   renderStops(walk.stops);
   renderRoutePicker();
   loadPhotos(walk.stops);
@@ -759,11 +763,40 @@ function stopWhen(stop: RouteStop): string {
   return arrive;
 }
 
+/**
+ * The city's own record of a designated landmark: when it was built, in what
+ * style, by whom — then, for about one landmark in five, the paragraph the
+ * Planning Department wrote about why it matters.
+ */
+function landmarkHtml(stop: RouteStop): string {
+  const l = stop.landmark;
+  if (!l) return "";
+
+  const facts = [
+    l.built ? `Built ${l.built}` : undefined,
+    l.style,
+    l.architect,
+  ].filter((v): v is string => Boolean(v));
+
+  const designated = l.designated
+    ? `Landmark${l.number ? ` no. ${l.number}` : ""}, designated ${l.designated}`
+    : l.number
+      ? `Landmark no. ${l.number}`
+      : undefined;
+
+  return (
+    (facts.length > 0 ? `<em class="popup-facts">${escapeHtml(facts.join(" · "))}</em>` : "") +
+    (designated ? `<em>${escapeHtml(designated)}</em>` : "") +
+    (l.story ? `<p class="popup-story">${escapeHtml(l.story)}</p>` : "")
+  );
+}
+
 function popupHtml(stop: RouteStop, photo?: Photo | null): string {
   const head =
     `<b>${escapeHtml(stop.name)}</b>` +
     `<em>${labelFor(stop.kind)} · ${fmtDistance(stop.at)} in</em>` +
-    `<em class="popup-when popup-when--${stop.open}">${escapeHtml(stopWhen(stop))}</em>`;
+    `<em class="popup-when popup-when--${stop.open}">${escapeHtml(stopWhen(stop))}</em>` +
+    landmarkHtml(stop);
   if (!photo) return head;
 
   const credit = [photo.author, photo.license]
@@ -881,6 +914,12 @@ function renderStats(walk: Walk): void {
     stats.push({ value: String(walk.openStops), label: "Open as you pass", tone: "good" });
   }
 
+  if (walk.landmarkCount > 0) {
+    // Counts designated landmarks and the wider OSM historic sites together,
+    // so the label has to cover both rather than promising Article 10 listings.
+    stats.push({ value: String(walk.landmarkCount), label: "Historic sites" });
+  }
+
   if (walk.stepsMetres > 20) {
     stats.push({ value: `${Math.round(walk.stepsMetres)} m`, label: "Stairways" });
   }
@@ -955,6 +994,37 @@ function renderProfile(walk: Walk): void {
     (grade >= 15 ? " — properly San Francisco" : "");
 }
 
+/**
+ * The districts a walk runs through. Deliberately a sentence rather than more
+ * chips: a district is not a place you stop at, it is the ground you are on for
+ * a stretch of the walk, and pinning it to a marker would misrepresent it.
+ */
+function renderDistricts(walk: Walk): void {
+  if (walk.districts.length === 0) {
+    els.districts.hidden = true;
+    return;
+  }
+
+  const names = walk.districts.map((d) => {
+    // The historic list stores bare place names; the cultural one already
+    // spells the words out.
+    const full = /district/i.test(d.name)
+      ? d.name
+      : `${d.name} ${d.kind === "cultural" ? "Cultural" : "Historic"} District`;
+    const year = d.year ? ` <span class="districts__year">${d.year}</span>` : "";
+    return `${escapeHtml(full)}${year}`;
+  });
+
+  // "A, B and C" — an unpunctuated run of "and"s reads as a list nobody edited.
+  const bold = names.map((n) => `<strong>${n}</strong>`);
+  const last = bold.pop()!;
+  const joined = bold.length > 0 ? `${bold.join(", ")} and ${last}` : last;
+
+  els.districts.innerHTML =
+    `<span class="districts__icon" aria-hidden="true">❖</span> Through ${joined}`;
+  els.districts.hidden = false;
+}
+
 function renderStops(stops: RouteStop[]): void {
   if (stops.length === 0) {
     els.stops.innerHTML =
@@ -1003,6 +1073,8 @@ function labelFor(kind: string): string {
     market: "Market",
     shop: "Shop",
     culture: "Museum, gallery or library",
+    landmark: "San Francisco landmark",
+    district: "District",
   };
   return labels[kind] ?? "Point of interest";
 }

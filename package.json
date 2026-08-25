@@ -8,6 +8,7 @@
     "dev": "bun run build && bun src/server.ts",
     "serve": "bun src/server.ts",
     "build:hin": "bun run scripts/build-hin.ts",
+    "build:landmarks": "bun run scripts/build-landmarks.ts",
     "typecheck": "tsc --noEmit",
     "deploy": "bash scripts/deploy.sh",
     "sync:check": "bash scripts/sync-check.sh",
