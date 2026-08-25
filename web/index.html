@@ -6,7 +6,7 @@
     <title>sanbu — the scenic way round</title>
     <meta
       name="description"
-      content="Loop walks in San Francisco routed for viewpoints, tree cover and street safety."
+      content="Loop walks in San Francisco routed for the hour you set off — golden-hour viewpoints, shops that are open when you pass, and lit streets after dark."
     />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0d12'/%3E%3Cpath d='M7 22c4-1 5-8 9-8s5 5 9 3' stroke='%23ffc46b' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='24' cy='11' r='2.5' fill='%23ff7d5c'/%3E%3C/svg%3E" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -50,6 +50,35 @@
           <button type="button" role="radio" data-minutes="60" aria-checked="false">60m</button>
           <button type="button" role="radio" data-minutes="90" aria-checked="false">90m</button>
         </div>
+      </div>
+
+      <div class="field">
+        <div class="field__row">
+          <label class="field__label" for="start-time">Setting off</label>
+          <span class="field__value" id="start-value">Now</span>
+        </div>
+        <div class="timepick">
+          <button type="button" id="start-now" class="timepick__now is-active">Now</button>
+          <input
+            type="time"
+            id="start-time"
+            class="timepick__input"
+            step="300"
+            aria-label="Time you set off, San Francisco time"
+          />
+        </div>
+
+        <!--
+          The day at a glance: night, twilight, golden hour and daylight across
+          24 hours, with the walk's own window marked on it.
+        -->
+        <div class="sun" id="sun">
+          <div class="sun__bar" id="sun-bar">
+            <span class="sun__window" id="sun-window"></span>
+          </div>
+          <div class="sun__marks" id="sun-marks"></div>
+        </div>
+        <p class="daynote" id="daynote"></p>
       </div>
 
       <div class="field">
@@ -110,7 +139,8 @@
       </button>
 
       <p class="note" id="note">
-        Routed on OpenStreetMap, weighted by SF's Vision&nbsp;Zero High Injury Network.
+        Routed on OpenStreetMap, weighted by SF's Vision&nbsp;Zero High Injury
+        Network and by what is open when you get there.
       </p>
     </aside>
 

@@ -15,6 +15,8 @@ import { haversine, type LatLon } from "../src/geo";
 import { IndexedDbStore, setStore } from "../src/store";
 import { findPhotos, type Photo } from "../src/photos";
 import { loadHin, type HinSegment } from "../src/hin";
+import { atTimeOfDay, formatClock, minutesOfDay, wallClock, weekdayName } from "../src/clock";
+import { DayContext, isVenue, planningNote, PHASE_LABEL } from "../src/timeofday";
 
 setStore(new IndexedDbStore());
 
@@ -30,6 +32,11 @@ const state = {
   hills: "avoid" as "avoid" | "seek",
   trip: "loop" as "loop" | "oneway",
   heightCm: Number(localStorage.getItem(HEIGHT_KEY)) || 173,
+  /**
+   * When the walk starts, in epoch milliseconds — or null for "now", which is
+   * re-read at the moment you press the button rather than frozen at page load.
+   */
+  startMs: null as number | null,
   busy: false,
   /** The alternatives currently on offer, best first. */
   routes: [] as Walk[],
@@ -59,6 +66,13 @@ const els = {
   height: $<HTMLInputElement>("height"),
   heightValue: $("height-value"),
   heightAlt: $("height-alt"),
+  startNow: $<HTMLButtonElement>("start-now"),
+  startTime: $<HTMLInputElement>("start-time"),
+  startValue: $("start-value"),
+  sunBar: $("sun-bar"),
+  sunWindow: $("sun-window"),
+  sunMarks: $("sun-marks"),
+  dayNote: $("daynote"),
 };
 
 /* ---------- Map ---------- */
@@ -254,6 +268,7 @@ function setOrigin(lat: number, lon: number, label: string): void {
   }).addTo(markerLayer);
 
   map.setView([lat, lon], Math.max(map.getZoom(), 15));
+  renderDay();
 }
 
 els.locate.addEventListener("click", () => {
@@ -287,6 +302,8 @@ document.querySelectorAll<HTMLButtonElement>("#time-group button").forEach((btn)
     btn.classList.add("is-active");
     btn.setAttribute("aria-checked", "true");
     state.minutes = Number(btn.dataset.minutes);
+    // A longer walk may now run into the dark, and the strip should say so.
+    renderDay();
   });
 });
 
@@ -320,6 +337,106 @@ document.querySelectorAll<HTMLButtonElement>("#trip button").forEach((btn) => {
     state.trip = btn.dataset.trip === "oneway" ? "oneway" : "loop";
   });
 });
+
+/* ---------- Time of day ---------- */
+
+/**
+ * The instant the walk begins. "Now" stays live — it is read when you press
+ * the button, not frozen at page load, so a tab left open overnight does not
+ * plan you a sunset walk at two in the morning.
+ */
+function startInstant(): number {
+  return state.startMs ?? Date.now();
+}
+
+/** Rebuilt on demand: a handful of trigonometric terms, and never stale. */
+function currentContext(): DayContext {
+  return new DayContext(startInstant(), state.origin ?? SF_DEFAULT);
+}
+
+function setStart(ms: number | null): void {
+  state.startMs = ms;
+  els.startNow.classList.toggle("is-active", ms === null);
+  els.startTime.value = formatClock(ms ?? Date.now());
+  renderDay();
+}
+
+els.startNow.addEventListener("click", () => setStart(null));
+
+els.startTime.addEventListener("change", () => {
+  const [hh, mm] = els.startTime.value.split(":");
+  const hour = Number(hh);
+  const minute = Number(mm);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return;
+
+  const now = Date.now();
+  let chosen = atTimeOfDay(now, hour, minute);
+  // Asking for 07:00 late at night means tomorrow morning. A time only just
+  // gone is taken at face value, so nudging the clock back by ten minutes does
+  // not throw the walk a day into the future.
+  if (chosen < now - 3 * 3_600_000) chosen = atTimeOfDay(now + 86_400_000, hour, minute);
+  setStart(chosen);
+});
+
+/** The bands of the day, as they are painted on the strip. */
+const SUN_COLOURS = {
+  night: "#141922",
+  twilight: "#4b4468",
+  golden: "#ffb057",
+  day: "#8fd0e8",
+};
+
+/**
+ * The day drawn as a 24-hour strip — night, twilight, the two golden hours and
+ * daylight — with the walk's own window marked on it. It is the fastest way to
+ * answer "will I be out there in the dark?", which is the question the time
+ * control exists to settle.
+ */
+function renderDay(): void {
+  const ctx = currentContext();
+  const start = ctx.start;
+  const end = start + state.minutes * 60_000;
+  const t = ctx.times;
+
+  const live = state.startMs === null;
+  const tomorrow = wallClock(start).day !== wallClock(Date.now()).day;
+  els.startValue.textContent =
+    (live ? "Now · " : tomorrow ? `${weekdayName(start)} · ` : "") +
+    `${formatClock(start)} · ${PHASE_LABEL[ctx.momentAt(0).phase]}`;
+
+  const pct = (ms: number) => (minutesOfDay(ms) / 1440) * 100;
+  const mid = (a: number, b: number) => (pct(a) + pct(b)) / 2;
+
+  els.sunBar.style.background = `linear-gradient(90deg,
+    ${SUN_COLOURS.night} 0%,
+    ${SUN_COLOURS.night} ${pct(t.dawn)}%,
+    ${SUN_COLOURS.twilight} ${pct(t.sunrise)}%,
+    ${SUN_COLOURS.golden} ${mid(t.sunrise, t.goldenMorningEnd)}%,
+    ${SUN_COLOURS.day} ${pct(t.goldenMorningEnd)}%,
+    ${SUN_COLOURS.day} ${pct(t.goldenEveningStart)}%,
+    ${SUN_COLOURS.golden} ${mid(t.goldenEveningStart, t.sunset)}%,
+    ${SUN_COLOURS.twilight} ${pct(t.sunset)}%,
+    ${SUN_COLOURS.night} ${pct(t.dusk)}%,
+    ${SUN_COLOURS.night} 100%)`;
+
+  // A walk that runs past midnight simply runs to the end of the strip, and a
+  // walk starting at 23:55 still gets a window wide enough to see.
+  const from = Math.min(pct(start), 97);
+  const to = pct(end) < from ? 100 : pct(end);
+  els.sunWindow.style.left = `${from}%`;
+  els.sunWindow.style.width = `${Math.min(100 - from, Math.max(3, to - from))}%`;
+
+  els.sunMarks.innerHTML =
+    `<span class="sun__mark" style="left:${pct(t.sunrise)}%">↑ ${formatClock(t.sunrise)}</span>` +
+    `<span class="sun__mark" style="left:${pct(t.sunset)}%">↓ ${formatClock(t.sunset)}</span>`;
+
+  els.dayNote.textContent = planningNote(ctx, state.minutes);
+}
+
+// Keep "Now" honest while the panel sits open.
+setInterval(() => {
+  if (state.startMs === null) renderDay();
+}, 60_000);
 
 function renderHeight(): void {
   const cm = state.heightCm;
@@ -406,6 +523,7 @@ async function plan(): Promise<void> {
     scenic: state.scenic,
     hills: state.hills,
     trip: state.trip,
+    startMs: startInstant(),
   };
   // Enough room for the loop to breathe without pulling half the city.
   const radiusM = Math.min(2600, Math.max(900, prefs.minutes * 1.33 * 60 * 0.42));
@@ -423,7 +541,7 @@ async function plan(): Promise<void> {
     // Yield once so the spinner paints before the search occupies the thread.
     await new Promise((r) => setTimeout(r, 0));
 
-    const walks = planWalks(graph, state.origin, prefs, 5);
+    const { walks } = planWalks(graph, state.origin, prefs, 5);
     if (walks.length === 0) {
       showToast(
         state.trip === "loop"
@@ -434,6 +552,8 @@ async function plan(): Promise<void> {
     }
     state.routes = walks;
     selectRoute(0);
+    // The plan was made against the clock as it stood; show that same clock.
+    renderDay();
   } catch (err) {
     showToast(`Map data is unavailable right now. ${(err as Error).message}`);
   } finally {
@@ -478,6 +598,11 @@ const STOP_ICONS: Record<string, string> = {
   artwork: "◈",
   attraction: "✦",
   tree: "↟",
+  cafe: "∪",
+  bar: "▽",
+  market: "⊞",
+  shop: "▣",
+  culture: "◫",
 };
 
 /** Switches to one of the offered routes, wrapping at both ends. */
@@ -614,10 +739,31 @@ function gradientAt(stops: Array<[number, number, number]>, t: number): string {
 
 const stopMarkers = new Map<RouteStop, L.Marker>();
 
+/**
+ * When you would get there, and whether the door will be open when you do.
+ * Places that are shut on arrival never become stops, but a park with gate
+ * hours can still be on the way, and saying so is the point.
+ */
+function stopWhen(stop: RouteStop): string {
+  const arrive = `pass at ${formatClock(stop.eta)}`;
+  if (stop.open === "open") {
+    return stop.closesAt !== undefined
+      ? `${arrive} · open until ${formatClock(stop.closesAt)}`
+      : `${arrive} · open`;
+  }
+  if (stop.open === "closed") {
+    return stop.opensAt !== undefined
+      ? `${arrive} · shut until ${formatClock(stop.opensAt)}`
+      : `${arrive} · shut`;
+  }
+  return arrive;
+}
+
 function popupHtml(stop: RouteStop, photo?: Photo | null): string {
   const head =
     `<b>${escapeHtml(stop.name)}</b>` +
-    `<em>${labelFor(stop.kind)} · ${fmtDistance(stop.at)} in</em>`;
+    `<em>${labelFor(stop.kind)} · ${fmtDistance(stop.at)} in</em>` +
+    `<em class="popup-when popup-when--${stop.open}">${escapeHtml(stopWhen(stop))}</em>`;
   if (!photo) return head;
 
   const credit = [photo.author, photo.license]
@@ -659,8 +805,14 @@ let photoRun = 0;
 
 function loadPhotos(stops: RouteStop[]): void {
   const run = ++photoRun;
+
+  // Commons is searched by coordinate, not by name, so a hit near a small
+  // shopfront is whatever else happens to be on that block — not the café. A
+  // museum is big enough that the nearest photograph really is of it.
+  const worthPhotographing = stops.filter((s) => !isVenue(s.kind) || s.kind === "culture");
+
   // Viewpoints first — they are what someone actually wants to see.
-  const ordered = [...stops].sort(
+  const ordered = [...worthPhotographing].sort(
     (a, b) => (a.kind === "viewpoint" ? 0 : 1) - (b.kind === "viewpoint" ? 0 : 1),
   );
 
@@ -719,8 +871,27 @@ function renderStats(walk: Walk): void {
     label: "Steps",
   });
 
+  // The clock the whole plan hangs on: when you would be finished.
+  stats.splice(2, 0, {
+    value: formatClock(walk.endMs),
+    label: walk.isLoop ? "Back by" : "Arrive",
+  });
+
+  if (walk.openStops > 0) {
+    stats.push({ value: String(walk.openStops), label: "Open as you pass", tone: "good" });
+  }
+
   if (walk.stepsMetres > 20) {
     stats.push({ value: `${Math.round(walk.stepsMetres)} m`, label: "Stairways" });
+  }
+
+  if (walk.darkMetres > walk.distance * 0.15) {
+    const unlitPct = (walk.unlitDarkMetres / Math.max(1, walk.darkMetres)) * 100;
+    stats.push({
+      value: `${Math.round((walk.darkMetres / Math.max(1, walk.distance)) * 100)}%`,
+      label: "After dark",
+      tone: unlitPct > 12 ? "warn" : undefined,
+    });
   }
 
   els.stats.innerHTML = stats
@@ -778,8 +949,9 @@ function renderProfile(walk: Walk): void {
   );
 
   const grade = Math.round(walk.maxGrade * 100);
+  const window = `${formatClock(walk.startMs)}–${formatClock(walk.endMs)}`;
   els.profileCaption.textContent =
-    `${Math.round(lo)}–${Math.round(hi)} m elevation · steepest pitch ${grade}%` +
+    `${window} · ${Math.round(lo)}–${Math.round(hi)} m elevation · steepest pitch ${grade}%` +
     (grade >= 15 ? " — properly San Francisco" : "");
 }
 
@@ -790,13 +962,19 @@ function renderStops(stops: RouteStop[]): void {
     return;
   }
   els.stops.innerHTML = stops
-    .map(
-      (s, i) => `<button class="chip" data-i="${i}">
+    .map((s, i) => {
+      // Venues earn a dot when their hours actually say they are open; the
+      // untagged ones get nothing rather than a promise nobody can keep.
+      const badge =
+        isVenue(s.kind) && s.open === "open"
+          ? '<span class="chip__dot" title="Open when you pass"></span>'
+          : "";
+      return `<button class="chip" data-i="${i}" title="${escapeHtml(stopWhen(s))}">
         <span class="chip__icon">${STOP_ICONS[s.kind] ?? "✦"}</span>
-        <span>${escapeHtml(s.name)}</span>
-        <span class="chip__at">${fmtDistance(s.at)}</span>
-      </button>`,
-    )
+        <span>${escapeHtml(s.name)}</span>${badge}
+        <span class="chip__at">${formatClock(s.eta)}</span>
+      </button>`;
+    })
     .join("");
 
   els.stops.querySelectorAll<HTMLButtonElement>(".chip").forEach((chip) => {
@@ -820,6 +998,11 @@ function labelFor(kind: string): string {
     artwork: "Public art",
     attraction: "Attraction",
     tree: "Canopy",
+    cafe: "Café",
+    bar: "Bar",
+    market: "Market",
+    shop: "Shop",
+    culture: "Museum, gallery or library",
   };
   return labels[kind] ?? "Point of interest";
 }
@@ -851,6 +1034,7 @@ function hideToast(): void {
 
 /* ---------- Boot ---------- */
 
+setStart(null);
 setOrigin(SF_DEFAULT.lat, SF_DEFAULT.lon, "Alamo Square");
 els.locate.classList.remove("is-set");
 els.locateLabel.textContent = "Use my location";

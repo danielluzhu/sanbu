@@ -6,9 +6,14 @@
  * point to the next, carrying the intermediate geometry along for drawing.
  */
 import { warmElevation, elevationAt, type Lattice } from "./elevation";
-import { fetchScenicFeatures, fetchWalkNetwork, type ScenicFeature } from "./overpass";
+import {
+  fetchPlaces,
+  fetchScenicFeatures,
+  fetchWalkNetwork,
+  type ScenicFeature,
+} from "./overpass";
 import { HinIndex, loadHin } from "./hin";
-import { SpatialGrid, bboxAround, haversine, type LatLon } from "./geo";
+import { SpatialGrid, bboxAround, haversine, metresPerDegree, type LatLon } from "./geo";
 
 export interface GraphNode extends LatLon {
   id: number;
@@ -21,8 +26,20 @@ export interface Edge {
   to: number;
   pts: LatLon[];
   length: number;
-  /** 0..1, higher is prettier. */
+  /**
+   * 0..1, higher is prettier — as it would be in plain daylight with every
+   * door open. Kept for display and for comparing routes to each other; the
+   * router uses `scenicAt`, which reads this apart into its two halves below.
+   */
   scenic: number;
+  /** The part of `scenic` the clock cannot touch: canopy, car-free, stairways. */
+  scenicBase: number;
+  /**
+   * The part that depends on when you walk past — views that need light,
+   * places that need to be open. Weights are the score each would earn at its
+   * best; the time of arrival scales them.
+   */
+  timed: TimedCredit[];
   /** 0..1, higher is more dangerous on foot. */
   hazard: number;
   /** Metres climbed walking from -> to (negative going down). */
@@ -38,6 +55,14 @@ export interface Edge {
   credits: ScenicFeature[];
   /** Treads on this edge, where OSM records them. Only set for stairways. */
   stepCount?: number;
+  /** Nothing lights this stretch once the sun is down. */
+  unlit: boolean;
+}
+
+/** A time-sensitive feature and the score it would contribute at its best. */
+export interface TimedCredit {
+  feature: ScenicFeature;
+  weight: number;
 }
 
 export interface WalkGraph {
@@ -59,7 +84,31 @@ const SCENIC_RULES: Record<string, { radius: number; weight: number }> = {
   artwork: { radius: 80, weight: 0.3 },
   attraction: { radius: 120, weight: 0.35 },
   tree: { radius: 35, weight: 0.1 },
+  // Somewhere with a door is only worth it if you pass the door, so these
+  // reach far less far than a view does.
+  cafe: { radius: 70, weight: 0.42 },
+  bar: { radius: 60, weight: 0.3 },
+  market: { radius: 90, weight: 0.45 },
+  shop: { radius: 60, weight: 0.28 },
+  culture: { radius: 110, weight: 0.5 },
 };
+
+/** Feature kinds whose worth rises and falls with the hour. */
+const TIME_SENSITIVE = new Set([
+  "viewpoint",
+  "park",
+  "garden",
+  "water",
+  "beach",
+  "historic",
+  "artwork",
+  "attraction",
+  "cafe",
+  "bar",
+  "market",
+  "shop",
+  "culture",
+]);
 
 /**
  * Genuinely traffic-separated ways. `footway` is deliberately absent: San
@@ -103,12 +152,16 @@ const ARTERIAL: Record<string, number> = {
 export async function buildGraph(centre: LatLon, radiusM: number): Promise<WalkGraph> {
   const bbox = bboxAround(centre, radiusM);
 
-  const [network, features, hinSegments, lattice] = await Promise.all([
+  const [network, scenery, places, hinSegments, lattice] = await Promise.all([
     fetchWalkNetwork(bbox),
     fetchScenicFeatures(bbox),
+    fetchPlaces(bbox),
     loadHin(),
     warmElevation(bbox),
   ]);
+
+  const features = [...scenery, ...places];
+  measureProminence(features, lattice);
 
   const hin = new HinIndex(hinSegments, centre.lat);
 
@@ -240,8 +293,13 @@ function makeEdge(
   // for routing can never disagree.
   const onHin = samples.some((s) => hin.isHighInjury(s));
 
-  const { scenic, credits } = scoreScenery(samples, featureGrid, carFree, isSteps);
+  const { base, timed, credits } = scoreScenery(samples, featureGrid, carFree, isSteps);
   const hazard = scoreHazard(tags, highway, carFree, onHin);
+
+  // The daylight-with-everything-open reading, for display and for ranking
+  // routes against one another.
+  let neutral = base;
+  for (const c of timed) neutral += c.weight;
 
   const rise = b.ele - a.ele;
   const grade =
@@ -253,7 +311,9 @@ function makeEdge(
     to: b.id,
     pts,
     length,
-    scenic,
+    scenic: Math.min(1, neutral),
+    scenicBase: base,
+    timed,
     hazard,
     rise,
     grade,
@@ -264,7 +324,45 @@ function makeEdge(
     carFree,
     credits,
     stepCount: stepsPerMetre !== undefined ? stepsPerMetre * length : undefined,
+    unlit: isUnlit(highway, tags),
   };
+}
+
+/**
+ * Streets we should assume go dark. An explicit `lit=no` is the reliable
+ * signal; beyond that only genuinely rural-feeling ways are presumed unlit,
+ * because San Francisco lights its streets and its public stairways and
+ * guessing otherwise would quietly ban half the city after 18:00 in winter.
+ */
+function isUnlit(highway: string, tags: Record<string, string>): boolean {
+  if (tags.lit === "no") return true;
+  if (tags.lit) return false;
+  return highway === "path" || highway === "track";
+}
+
+/**
+ * How far each viewpoint stands above the ground around it, sampled off the
+ * terrain lattice. A railing 90m above its surroundings still earns its walk
+ * after dark — that is when the city below turns into the view — whereas a
+ * viewpoint at street level does not.
+ */
+function measureProminence(features: ScenicFeature[], lattice: Lattice): void {
+  const RING_M = 350;
+  for (const f of features) {
+    if (f.kind !== "viewpoint") continue;
+    const here = elevationAt(lattice, f);
+    const m = metresPerDegree(f.lat);
+    let around = 0;
+    const SAMPLES = 8;
+    for (let i = 0; i < SAMPLES; i++) {
+      const angle = (i / SAMPLES) * 2 * Math.PI;
+      around += elevationAt(lattice, {
+        lat: f.lat + (Math.sin(angle) * RING_M) / m.y,
+        lon: f.lon + (Math.cos(angle) * RING_M) / m.x,
+      });
+    }
+    f.prominence = here - around / SAMPLES;
+  }
 }
 
 function scoreScenery(
@@ -272,7 +370,7 @@ function scoreScenery(
   grid: SpatialGrid<ScenicFeature>,
   carFree: boolean,
   isSteps: boolean,
-): { scenic: number; credits: ScenicFeature[] } {
+): { base: number; timed: TimedCredit[]; credits: ScenicFeature[] } {
   // Best contribution per feature type, so a street lined with 40 trees does
   // not out-score an actual panorama.
   const best = new Map<string, number>();
@@ -299,15 +397,21 @@ function scoreScenery(
     }
   }
 
-  let score = 0;
-  for (const v of best.values()) score += v;
+  let base = 0;
+  const timed: TimedCredit[] = [];
+  for (const [kind, weight] of best) {
+    const feature = credits.get(kind);
+    if (feature && TIME_SENSITIVE.has(kind)) timed.push({ feature, weight });
+    else base += weight;
+  }
 
-  // Canopy: saturating bonus for street trees.
-  if (treeCount > 0) score += Math.min(0.35, 0.045 * Math.sqrt(treeCount));
-  if (carFree) score += 0.25;
-  if (isSteps) score += 0.2;
+  // Canopy: saturating bonus for street trees. Trees are pleasant at any hour,
+  // and the sun is not what makes a street feel green.
+  if (treeCount > 0) base += Math.min(0.35, 0.045 * Math.sqrt(treeCount));
+  if (carFree) base += 0.25;
+  if (isSteps) base += 0.2;
 
-  return { scenic: Math.min(1, score), credits: [...credits.values()] };
+  return { base, timed, credits: [...credits.values()] };
 }
 
 function scoreHazard(

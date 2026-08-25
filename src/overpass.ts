@@ -1,6 +1,7 @@
 /** Overpass API access: the walkable street graph and the scenic features on it. */
 import { cached } from "./store";
 import type { LatLon } from "./geo";
+import { parseDirection } from "./sun";
 
 /**
  * Mirrors must send `Access-Control-Allow-Origin`, because this runs in the
@@ -153,12 +154,24 @@ export type FeatureKind =
   | "tree"
   | "artwork"
   | "historic"
-  | "attraction";
+  | "attraction"
+  /* Places with a door and a closing time. */
+  | "cafe"
+  | "bar"
+  | "market"
+  | "shop"
+  | "culture";
 
 export interface ScenicFeature extends LatLon {
   id: string;
   kind: FeatureKind;
   name?: string;
+  /** Raw OSM `opening_hours`, where the mapper recorded one. */
+  opening?: string;
+  /** Compass bearing you look along, for viewpoints that record it. */
+  facing?: number;
+  /** Metres this point stands above the ground around it. Viewpoints only. */
+  prominence?: number;
 }
 
 /**
@@ -201,9 +214,68 @@ out center tags;`;
       lon,
       kind,
       name: t.name,
+      opening: t.opening_hours,
+      facing: kind === "viewpoint" ? parseDirection(t.direction) : undefined,
     });
   }
   return out;
+}
+
+/**
+ * Places you might actually stop at: coffee, books, a bar, a gallery.
+ *
+ * Kept to the kinds worth crossing a street for — no petrol stations, no
+ * pharmacies. Fetched separately from the scenery so that the two can be
+ * cached independently, and because these are the only features whose worth
+ * depends on the clock.
+ */
+export async function fetchPlaces(
+  bbox: [number, number, number, number],
+): Promise<ScenicFeature[]> {
+  const b = bbox.map((n) => n.toFixed(5)).join(",");
+  const ql = `[out:json][timeout:80];
+(
+  nwr["amenity"~"^(cafe|bar|pub|ice_cream|marketplace|library|theatre|cinema)$"](${b});
+  nwr["shop"~"^(bakery|books|art|antiques|music|second_hand|florist|greengrocer|deli|chocolate|coffee|tea|farm|craft|garden_centre|gift|frame|pottery|photo)$"](${b});
+  nwr["tourism"~"^(museum|gallery)$"](${b});
+);
+out center tags;`;
+
+  const key = `places:${b}`;
+  const elements = await cached<RawElement[]>(key, WEEK, () => query(ql));
+
+  const out: ScenicFeature[] = [];
+  for (const el of elements) {
+    const lat = el.lat ?? el.center?.lat;
+    const lon = el.lon ?? el.center?.lon;
+    if (lat === undefined || lon === undefined) continue;
+    const t = el.tags ?? {};
+    const kind = classifyPlace(t);
+    if (!kind) continue;
+    out.push({
+      id: `${el.type[0]}${el.id}`,
+      lat,
+      lon,
+      kind,
+      name: t.name,
+      opening: t.opening_hours,
+    });
+  }
+  return out;
+}
+
+function classifyPlace(t: Record<string, string>): FeatureKind | null {
+  const amenity = t.amenity ?? "";
+  const shop = t.shop ?? "";
+
+  if (amenity === "cafe" || amenity === "ice_cream") return "cafe";
+  if (["bakery", "coffee", "chocolate", "tea", "deli", "pastry"].includes(shop)) return "cafe";
+  if (amenity === "bar" || amenity === "pub") return "bar";
+  if (amenity === "marketplace" || shop === "greengrocer" || shop === "farm") return "market";
+  if (t.tourism === "museum" || t.tourism === "gallery" || shop === "art") return "culture";
+  if (["library", "theatre", "cinema"].includes(amenity)) return "culture";
+  if (shop) return "shop";
+  return null;
 }
 
 function classify(t: Record<string, string>): FeatureKind | null {

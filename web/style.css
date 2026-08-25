@@ -385,6 +385,85 @@ body {
   color: var(--faint);
 }
 
+/* ---------- Setting-off time ---------- */
+
+.timepick {
+  display: flex;
+  gap: 8px;
+}
+.timepick__now,
+.timepick__input {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 12.5px;
+}
+.timepick__now {
+  flex: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.16s, border-color 0.16s, color 0.16s;
+}
+.timepick__now:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+.timepick__now.is-active {
+  border-color: rgba(255, 196, 107, 0.4);
+  background: rgba(255, 196, 107, 0.14);
+  color: var(--amber);
+}
+.timepick__input {
+  flex: 1;
+  min-width: 0;
+  /* Asks the browser for the dark version of its native clock popup. */
+  color-scheme: dark;
+}
+
+/*
+ * The day as a strip: night, twilight, both golden hours and daylight, with
+ * the walk's own window drawn on top of it.
+ */
+.sun {
+  margin-top: 12px;
+}
+.sun__bar {
+  position: relative;
+  height: 10px;
+  border-radius: 99px;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.sun__window {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  border: 1.5px solid rgba(233, 236, 241, 0.9);
+  border-radius: 6px;
+  background: rgba(233, 236, 241, 0.16);
+  transition: left 0.25s ease, width 0.25s ease;
+}
+.sun__marks {
+  position: relative;
+  height: 13px;
+  margin-top: 6px;
+}
+.sun__mark {
+  position: absolute;
+  transform: translateX(-50%);
+  color: var(--faint);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.daynote {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
 .go {
   width: 100%;
   padding: 14px;
@@ -595,6 +674,16 @@ body {
 .chip__at {
   color: var(--faint);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+/* Marks a place whose own opening hours say it is open as you go past. */
+.chip__dot {
+  width: 6px;
+  height: 6px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: var(--mint);
+  box-shadow: 0 0 0 2px rgba(127, 212, 176, 0.22);
 }
 .chip--empty {
   color: var(--faint);
@@ -712,6 +801,15 @@ body {
   color: var(--muted);
   font-size: 11px;
   font-style: normal;
+}
+.popup-when {
+  font-variant-numeric: tabular-nums;
+}
+.popup-when--open {
+  color: var(--mint) !important;
+}
+.popup-when--closed {
+  color: var(--amber) !important;
 }
 .leaflet-popup-tip {
   background: var(--glass-solid);
