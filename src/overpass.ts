@@ -6,12 +6,14 @@ import type { LatLon } from "./geo";
  * Mirrors must send `Access-Control-Allow-Origin`, because this runs in the
  * browser. Several popular Overpass mirrors (kumi.systems, private.coffee) do
  * not, and a failover to one of those fails outright at the CORS layer rather
- * than returning an error we can retry — verify before adding one here.
+ * than returning an error we can retry.
+ *
+ * A mirror must also carry the whole planet. `overpass.osm.ch` was here and
+ * had to go: it serves a Switzerland-only extract, so every San Francisco
+ * query came back `200 OK` with zero elements and the app built an empty city
+ * rather than reporting a failure. Verify both properties before adding one.
  */
-const ENDPOINTS = [
-  "https://overpass-api.de/api/interpreter",
-  "https://overpass.osm.ch/api/interpreter",
-];
+const ENDPOINTS = ["https://overpass-api.de/api/interpreter"];
 
 const WEEK = 7 * 24 * 60 * 60 * 1000;
 
@@ -121,7 +123,14 @@ out body;
 out skel qt;`;
 
   const key = `walk:${b}`;
-  const elements = await cached<RawElement[]>(key, WEEK, () => query(ql));
+  const elements = await cached<RawElement[]>(key, WEEK, async () => {
+    const raw = await query(ql);
+    // Nowhere in San Francisco has no streets. An empty answer means the
+    // mirror let us down, and caching it for a week would be worse than
+    // failing now.
+    if (raw.length === 0) throw new Error("Overpass returned no streets for that area");
+    return raw;
+  });
 
   const nodes: OsmNode[] = [];
   const ways: OsmWay[] = [];
